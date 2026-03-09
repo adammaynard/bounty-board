@@ -110,7 +110,7 @@
   }
 
   // ---- Toast Notifications ----
-  function showToast(msg, type = 'info') {
+  function showToast(msg, type = 'info', duration = 3000) {
     const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
@@ -119,7 +119,7 @@
     setTimeout(() => {
       toast.classList.add('removing');
       setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    }, duration);
   }
 
   // ---- Gold Coin Burst Animation ----
@@ -1371,7 +1371,7 @@
         </div>
         ${req.note || req.tx_hash || req.external_address ? `
           <div class="fund-request-details">
-            ${req.tx_hash ? `<span class="fund-req-ref">Ref: <code>${escHtml(req.tx_hash)}</code></span>` : ''}
+            ${req.tx_hash ? `<span class="fund-req-ref">Ref: ${req.tx_hash.startsWith('0x') && req.tx_hash.length === 66 ? `<a href="https://basescan.org/tx/${escHtml(req.tx_hash)}" target="_blank" rel="noopener" style="font-family: monospace; font-size: var(--text-xs); color: var(--color-accent);">${escHtml(req.tx_hash.slice(0,10))}...${escHtml(req.tx_hash.slice(-8))}</a>` : `<code>${escHtml(req.tx_hash)}</code>`}</span>` : ''}
             ${req.external_address ? `<span class="fund-req-ref">To: <code>${escHtml(req.external_address)}</code></span>` : ''}
             ${req.note ? `<span class="fund-req-note">${escHtml(req.note)}</span>` : ''}
           </div>
@@ -1476,6 +1476,10 @@
     if (!currentUser || !currentUser.is_admin) {
       navigateTo('board');
       return;
+    }
+    // Ensure hotWalletInfo is loaded (needed for auto-withdraw status on fund requests)
+    if (!hotWalletInfo) {
+      try { hotWalletInfo = await apiPublic('/hot-wallet'); } catch (_) {}
     }
     showAdminTab(adminTab);
     loadAdminUsers();
@@ -1861,7 +1865,7 @@
           ${req.reviewer_username ? `<span style="font-size: var(--text-xs); color: var(--color-text-faint);">Reviewed by ${escHtml(req.reviewer_username)}</span>` : ''}
           ${isPending ? `
             <div class="admin-fund-req-actions">
-              <button class="btn btn-success btn-sm admin-approve-fund-req" data-req-id="${req.id}" data-type="${req.type}" data-ext="${escHtml(req.external_address || '')}">Approve</button>
+              <button class="btn btn-success btn-sm admin-approve-fund-req" data-req-id="${req.id}" data-type="${req.type}" data-ext="${escHtml(req.external_address || '')}" data-method="${req.method || 'crypto'}" data-amount="${req.amount}">Approve</button>
               <button class="btn btn-danger btn-sm admin-deny-fund-req" data-req-id="${req.id}">Deny</button>
             </div>
           ` : ''}
@@ -1880,13 +1884,24 @@
       const reqType = approveBtn.dataset.type;
       const extAddr = approveBtn.dataset.ext;
 
+      const reqMethod = approveBtn.dataset.method || 'crypto';
       let confirmMsg = `Approve this ${reqType} request?`;
+      let autoTransferNote = '';
       if (reqType === 'withdraw' && extAddr) {
-        confirmMsg = `Approve withdrawal? Make sure you have sent funds to: <code style="word-break:break-all;">${escHtml(extAddr)}</code>`;
+        if (reqMethod === 'crypto' && hotWalletInfo && hotWalletInfo.auto_withdraw_enabled) {
+          confirmMsg = `Approve withdrawal of <strong>${approveBtn.dataset.amount || ''} USDC</strong>?`;
+          autoTransferNote = `<div style="margin-top: var(--space-3); padding: var(--space-3); background: var(--color-success-bg, #e8f5e9); border-radius: 8px; font-size: var(--text-sm);">
+            \u26a1 <strong>Auto-transfer enabled</strong> \u2014 USDC will be sent on-chain to:<br>
+            <code style="word-break:break-all; font-size: var(--text-xs);">${escHtml(extAddr)}</code>
+          </div>`;
+        } else {
+          confirmMsg = `Approve withdrawal? Make sure you have sent funds to: <code style="word-break:break-all;">${escHtml(extAddr)}</code>`;
+        }
       }
 
       showModal(`Approve ${capitalizeFirst(reqType)} Request`, `
         <p style="font-size: var(--text-sm); color: var(--color-text-muted);">${confirmMsg}</p>
+        ${autoTransferNote}
         <div class="form-group" style="margin-top: var(--space-3);">
           <label for="approve-admin-note">Admin Note (optional)</label>
           <input type="text" id="approve-admin-note" class="form-input" placeholder="Optional note...">
@@ -1897,13 +1912,31 @@
           label: 'Approve', class: 'btn-success', action: async () => {
             const adminNote = document.getElementById('approve-admin-note').value.trim();
             try {
-              await api('/admin/fund-requests/review', 'POST', {
+              const result = await api('/admin/fund-requests/review', 'POST', {
                 request_id: reqId,
                 action: 'approve',
                 admin_note: adminNote
               });
-              showToast(`Request approved.`, 'success');
-              coinBurst(e.clientX, e.clientY);
+              if (result.auto_transferred && result.tx_hash) {
+                showToast(`Withdrawal approved & sent on-chain!`, 'success', 6000);
+                // Show tx hash modal
+                setTimeout(() => {
+                  showModal('Transfer Complete', `
+                    <p style="font-size: var(--text-sm); color: var(--color-text-muted); margin-bottom: var(--space-3);">USDC has been sent on Base L2.</p>
+                    <div class="form-group">
+                      <label>Transaction Hash</label>
+                      <div style="padding: var(--space-3); background: var(--color-bg); border-radius: 8px; word-break: break-all; font-family: monospace; font-size: var(--text-xs);">${escHtml(result.tx_hash)}</div>
+                    </div>
+                    <a href="${escHtml(result.explorer_url)}" target="_blank" rel="noopener" class="btn btn-gold" style="margin-top: var(--space-3); display: inline-flex; align-items: center; gap: var(--space-2); text-decoration: none;">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      View on BaseScan
+                    </a>
+                  `, [{ label: 'Close', class: 'btn-outline', action: () => {} }]);
+                }, 500);
+              } else {
+                showToast('Request approved.', 'success');
+                coinBurst(e.clientX, e.clientY);
+              }
               await refreshUserBalance();
               loadAdminFundRequests();
               loadAdminUsers();

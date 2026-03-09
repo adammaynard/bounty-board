@@ -4,9 +4,126 @@ from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data.db')
 
-# Hot wallet configuration — admin sets this to their Base L2 USDC wallet
+# ============================================================================
+# HOT WALLET & BLOCKCHAIN CONFIGURATION
+# ============================================================================
+# Public address of the hot wallet (shown to users for deposits)
 HOT_WALLET_ADDRESS = '0x0000000000000000000000000000000000000000'  # Replace with actual address
 HOT_WALLET_NOTE = 'Send USDC on Base L2 to this address, then submit a deposit request.'
+
+# USDC contract on Base L2 mainnet (official Circle deployment)
+USDC_CONTRACT_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'
+USDC_DECIMALS = 6  # USDC uses 6 decimal places
+
+# Base L2 chain ID
+BASE_CHAIN_ID = 8453
+
+# RPC endpoint for Base L2 — override with BOUNTY_BASE_RPC_URL env var
+# Default: Base public RPC (rate-limited, fine for low-volume use)
+BASE_RPC_URL = os.environ.get('BOUNTY_BASE_RPC_URL', 'https://mainnet.base.org')
+
+# Hot wallet private key — loaded from env var or file
+# SECURITY: Never hardcode this. Set via:
+#   export BOUNTY_HOT_WALLET_KEY="0xYourPrivateKey"
+# OR place the key (hex string) in a file and set:
+#   export BOUNTY_HOT_WALLET_KEY_FILE="/path/to/keyfile"
+HOT_WALLET_PRIVATE_KEY = None
+_key_env = os.environ.get('BOUNTY_HOT_WALLET_KEY', '').strip()
+_key_file = os.environ.get('BOUNTY_HOT_WALLET_KEY_FILE', '').strip()
+if _key_env:
+    HOT_WALLET_PRIVATE_KEY = _key_env
+elif _key_file and os.path.isfile(_key_file):
+    with open(_key_file, 'r') as f:
+        HOT_WALLET_PRIVATE_KEY = f.read().strip()
+
+# Minimal ERC-20 ABI for transfer + balanceOf
+ERC20_ABI = json.loads('[{"constant":false,"inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"type":"function"},{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}]')
+
+# ============================================================================
+# USDC TRANSFER HELPER
+# ============================================================================
+def send_usdc(to_address, amount_usdc):
+    """Send USDC on Base L2 from the hot wallet. Returns tx hash hex string.
+    Raises RuntimeError on failure.
+    """
+    try:
+        from web3 import Web3
+    except ImportError:
+        raise RuntimeError(
+            'web3 package not installed. Run: pip install web3'
+        )
+
+    if not HOT_WALLET_PRIVATE_KEY:
+        raise RuntimeError(
+            'Hot wallet private key not configured. '
+            'Set BOUNTY_HOT_WALLET_KEY or BOUNTY_HOT_WALLET_KEY_FILE env var.'
+        )
+
+    w3 = Web3(Web3.HTTPProvider(BASE_RPC_URL))
+    if not w3.is_connected():
+        raise RuntimeError(f'Cannot connect to Base RPC: {BASE_RPC_URL}')
+
+    # Derive hot wallet address from private key
+    account = w3.eth.account.from_key(HOT_WALLET_PRIVATE_KEY)
+
+    # Validate destination address
+    if not w3.is_address(to_address):
+        raise RuntimeError(f'Invalid destination address: {to_address}')
+    to_address = w3.to_checksum_address(to_address)
+
+    # USDC contract
+    usdc = w3.eth.contract(
+        address=w3.to_checksum_address(USDC_CONTRACT_ADDRESS),
+        abi=ERC20_ABI
+    )
+
+    # Convert human-readable amount to raw (6 decimals)
+    raw_amount = int(amount_usdc * (10 ** USDC_DECIMALS))
+
+    # Check USDC balance
+    balance = usdc.functions.balanceOf(account.address).call()
+    if balance < raw_amount:
+        balance_human = balance / (10 ** USDC_DECIMALS)
+        raise RuntimeError(
+            f'Insufficient USDC in hot wallet. '
+            f'Need {amount_usdc:.2f}, have {balance_human:.2f}'
+        )
+
+    # Check ETH balance for gas
+    eth_balance = w3.eth.get_balance(account.address)
+    if eth_balance < w3.to_wei(0.0001, 'ether'):  # ~$0.05 min gas buffer
+        raise RuntimeError(
+            'Hot wallet needs ETH for gas fees on Base. '
+            f'Current balance: {w3.from_wei(eth_balance, "ether"):.6f} ETH'
+        )
+
+    # Build transfer transaction
+    nonce = w3.eth.get_transaction_count(account.address)
+    tx = usdc.functions.transfer(to_address, raw_amount).build_transaction({
+        'chainId': BASE_CHAIN_ID,
+        'gas': 65000,  # ERC-20 transfers on Base typically use ~50k gas
+        'nonce': nonce,
+    })
+
+    # Use EIP-1559 fee estimation if available, otherwise legacy gasPrice
+    try:
+        latest = w3.eth.get_block('latest')
+        base_fee = latest.get('baseFeePerGas', 0)
+        if base_fee > 0:
+            # EIP-1559: set maxFeePerGas with headroom
+            tx['maxFeePerGas'] = base_fee * 2 + w3.to_wei(0.001, 'gwei')
+            tx['maxPriorityFeePerGas'] = w3.to_wei(0.001, 'gwei')
+            tx.pop('gasPrice', None)
+        else:
+            tx['gasPrice'] = w3.eth.gas_price
+    except Exception:
+        tx['gasPrice'] = w3.eth.gas_price
+
+    # Sign and send
+    signed_tx = w3.eth.account.sign_transaction(tx, HOT_WALLET_PRIVATE_KEY)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+
+    return tx_hash.hex()
 
 def get_db():
     db = sqlite3.connect(DB_PATH)
@@ -717,12 +834,55 @@ def handle_profile(db, params):
 # ============================================================
 
 def handle_hot_wallet(db, params):
-    respond({
+    data = {
         "address": HOT_WALLET_ADDRESS,
         "note": HOT_WALLET_NOTE,
         "network": "Base L2",
-        "token": "USDC"
-    })
+        "token": "USDC",
+        "auto_withdraw_enabled": HOT_WALLET_PRIVATE_KEY is not None,
+    }
+    respond(data)
+
+def handle_hot_wallet_status(db, params):
+    """Admin-only: check hot wallet on-chain balances and config status."""
+    user_id = params.get('user_id')
+    if not user_id:
+        error("Authentication required", 401)
+    require_admin(db, user_id)
+
+    status = {
+        "address": HOT_WALLET_ADDRESS,
+        "auto_withdraw_configured": HOT_WALLET_PRIVATE_KEY is not None,
+        "rpc_url": BASE_RPC_URL,
+        "usdc_contract": USDC_CONTRACT_ADDRESS,
+        "usdc_balance": None,
+        "eth_balance": None,
+        "error": None,
+    }
+
+    if HOT_WALLET_PRIVATE_KEY:
+        try:
+            from web3 import Web3
+            w3 = Web3(Web3.HTTPProvider(BASE_RPC_URL))
+            if not w3.is_connected():
+                status['error'] = 'Cannot connect to Base RPC'
+            else:
+                account = w3.eth.account.from_key(HOT_WALLET_PRIVATE_KEY)
+                status['address'] = account.address  # derived from key
+                usdc = w3.eth.contract(
+                    address=w3.to_checksum_address(USDC_CONTRACT_ADDRESS),
+                    abi=ERC20_ABI
+                )
+                raw_balance = usdc.functions.balanceOf(account.address).call()
+                status['usdc_balance'] = round(raw_balance / (10 ** USDC_DECIMALS), 2)
+                eth_wei = w3.eth.get_balance(account.address)
+                status['eth_balance'] = round(float(w3.from_wei(eth_wei, 'ether')), 6)
+        except ImportError:
+            status['error'] = 'web3 package not installed'
+        except Exception as e:
+            status['error'] = str(e)
+
+    respond(status)
 
 def handle_create_fund_request(db, body):
     user_id = get_user_id(body)
@@ -831,23 +991,51 @@ def handle_admin_review_fund_request(db, body):
             available = user['balance'] - escrowed
             if req['amount'] > available:
                 error(f"User no longer has sufficient balance. Available: {available:.2f}")
-            db.execute("UPDATE users SET balance = balance - ? WHERE id = ?", [req['amount'], req['user_id']])
+
             ext_addr = req['external_address'] if req['external_address'] else 'N/A'
+            on_chain_tx_hash = None
+
+            # Automated USDC transfer for crypto withdrawals
+            if req['method'] == 'crypto' and ext_addr and ext_addr != 'N/A':
+                try:
+                    on_chain_tx_hash = send_usdc(ext_addr, req['amount'])
+                except RuntimeError as e:
+                    error(f"On-chain transfer failed: {e}")
+                except Exception as e:
+                    error(f"Unexpected error during transfer: {e}")
+
+            db.execute("UPDATE users SET balance = balance - ? WHERE id = ?", [req['amount'], req['user_id']])
             note_str = f"Withdrawal to {ext_addr}"
             if req['method'] and req['method'] != 'crypto':
                 note_str += f" via {req['method']}"
+            if on_chain_tx_hash:
+                note_str += f" | tx: {on_chain_tx_hash}"
             db.execute("""
                 INSERT INTO transactions (from_user_id, amount, type, note)
                 VALUES (?, ?, 'withdrawal', ?)
             """, [req['user_id'], req['amount'], note_str])
 
+            # Store on-chain tx hash on the fund request
+            if on_chain_tx_hash:
+                db.execute(
+                    "UPDATE fund_requests SET tx_hash = ? WHERE id = ?",
+                    [on_chain_tx_hash, request_id]
+                )
+
+    result_status = 'approved' if action == 'approve' else 'denied'
     db.execute("""
         UPDATE fund_requests SET status = ?, admin_note = ?, reviewed_by = ?, reviewed_at = ?
         WHERE id = ?
-    """, [('approved' if action == 'approve' else 'denied'), admin_note or None, user_id, now, request_id])
+    """, [result_status, admin_note or None, user_id, now, request_id])
     db.commit()
 
-    respond({"message": f"Request {action}d"})
+    response_data = {"message": f"Request {action}d"}
+    if action == 'approve' and req['type'] == 'withdraw':
+        response_data['auto_transferred'] = on_chain_tx_hash is not None
+        if on_chain_tx_hash:
+            response_data['tx_hash'] = on_chain_tx_hash
+            response_data['explorer_url'] = f"https://basescan.org/tx/{on_chain_tx_hash}"
+    respond(response_data)
 
 def handle_admin_confirm_payment(db, body):
     """Admin force-confirms both sides of an OOB quest payment."""
@@ -1146,6 +1334,8 @@ def main():
             handle_profile(db, params)
         elif path == '/hot-wallet' and method == 'GET':
             handle_hot_wallet(db, params)
+        elif path == '/hot-wallet/status' and method == 'GET':
+            handle_hot_wallet_status(db, params)
         elif path == '/fund-requests' and method == 'POST':
             handle_create_fund_request(db, body)
         elif path == '/fund-requests' and method == 'GET':
