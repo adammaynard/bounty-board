@@ -1005,12 +1005,68 @@
       </div>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-3);">
         <div class="form-group">
-          <label for="admin-edit-min">Min Reward</label>
+          <label for="admin-edit-cat">Category</label>
+          <select id="admin-edit-cat" class="form-select">
+            <option value="Chores"${quest.category === 'Chores' ? ' selected' : ''}>Chores</option>
+            <option value="Errands"${quest.category === 'Errands' ? ' selected' : ''}>Errands</option>
+            <option value="Projects"${quest.category === 'Projects' ? ' selected' : ''}>Projects</option>
+            <option value="Favors"${quest.category === 'Favors' ? ' selected' : ''}>Favors</option>
+            <option value="Learning"${quest.category === 'Learning' ? ' selected' : ''}>Learning</option>
+            <option value="Creative"${quest.category === 'Creative' ? ' selected' : ''}>Creative</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="admin-edit-diff">Difficulty</label>
+          <select id="admin-edit-diff" class="form-select">
+            <option value="Easy"${quest.difficulty === 'Easy' ? ' selected' : ''}>Easy</option>
+            <option value="Medium"${quest.difficulty === 'Medium' ? ' selected' : ''}>Medium</option>
+            <option value="Hard"${quest.difficulty === 'Hard' ? ' selected' : ''}>Hard</option>
+            <option value="Epic"${quest.difficulty === 'Epic' ? ' selected' : ''}>Epic</option>
+          </select>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-3);">
+        <div class="form-group">
+          <label for="admin-edit-min">Min Reward (USDC)</label>
           <input type="number" id="admin-edit-min" class="form-input" value="${quest.min_reward}" step="0.01">
         </div>
         <div class="form-group">
-          <label for="admin-edit-max">Max Reward</label>
+          <label for="admin-edit-max">Max Reward (USDC)</label>
           <input type="number" id="admin-edit-max" class="form-input" value="${quest.max_reward}" step="0.01">
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-3);">
+        <div class="form-group">
+          <label for="admin-edit-esc-type">Escalation Type</label>
+          <select id="admin-edit-esc-type" class="form-select">
+            <option value="linear"${quest.escalation_type === 'linear' ? ' selected' : ''}>Linear</option>
+            <option value="exponential"${quest.escalation_type === 'exponential' ? ' selected' : ''}>Exponential</option>
+            <option value="stepped"${quest.escalation_type === 'stepped' ? ' selected' : ''}>Stepped</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="admin-edit-esc-hrs">Escalation Period (hours)</label>
+          <input type="number" id="admin-edit-esc-hrs" class="form-input" value="${quest.escalation_period_hours}" min="1" step="1">
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-3);">
+        <div class="form-group">
+          <label for="admin-edit-status">Status</label>
+          <select id="admin-edit-status" class="form-select">
+            <option value="posted"${quest.status === 'posted' ? ' selected' : ''}>Posted</option>
+            <option value="claimed"${quest.status === 'claimed' ? ' selected' : ''}>Claimed</option>
+            <option value="submitted"${quest.status === 'submitted' ? ' selected' : ''}>Submitted</option>
+            <option value="approved"${quest.status === 'approved' ? ' selected' : ''}>Approved</option>
+            <option value="disputed"${quest.status === 'disputed' ? ' selected' : ''}>Disputed</option>
+            <option value="cancelled"${quest.status === 'cancelled' ? ' selected' : ''}>Cancelled</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="admin-edit-payment">Payment Method</label>
+          <select id="admin-edit-payment" class="form-select">
+            <option value="platform"${(quest.payment_method || 'platform') === 'platform' ? ' selected' : ''}>Platform</option>
+            <option value="out_of_band"${quest.payment_method === 'out_of_band' ? ' selected' : ''}>Out of Band</option>
+          </select>
         </div>
       </div>
     `, [
@@ -1022,10 +1078,14 @@
               quest_id: quest.id,
               title: document.getElementById('admin-edit-title').value.trim(),
               description: document.getElementById('admin-edit-desc').value.trim(),
+              category: document.getElementById('admin-edit-cat').value,
+              difficulty: document.getElementById('admin-edit-diff').value,
               min_reward: parseFloat(document.getElementById('admin-edit-min').value),
               max_reward: parseFloat(document.getElementById('admin-edit-max').value),
-              category: quest.category,
-              difficulty: quest.difficulty
+              escalation_type: document.getElementById('admin-edit-esc-type').value,
+              escalation_period_hours: parseFloat(document.getElementById('admin-edit-esc-hrs').value),
+              status: document.getElementById('admin-edit-status').value,
+              payment_method: document.getElementById('admin-edit-payment').value
             });
             showToast('Quest updated.', 'success');
             loadMyQuests();
@@ -1224,47 +1284,38 @@
 
   // Deposit button
   document.getElementById('deposit-btn').addEventListener('click', () => {
-    showModal('Request Deposit', `
+    showModal('Request Deposit (USDC)', `
       <p style="margin-bottom: var(--space-4); font-size: var(--text-sm); color: var(--color-text-muted);">
-        Send funds to the hot wallet first, then submit a deposit request. An admin will credit your balance once verified.
+        Send USDC on Base L2 to the hot wallet address above, then submit this request. An admin will credit your balance once the transaction is verified.
       </p>
       <div class="form-group">
         <label for="dep-amount">Amount (USDC)</label>
         <input type="number" id="dep-amount" class="form-input" placeholder="e.g. 50" min="0.01" step="0.01">
       </div>
       <div class="form-group" style="margin-top: var(--space-3);">
-        <label for="dep-method">Payment Method</label>
-        <select id="dep-method" class="form-select">
-          <option value="crypto">Crypto (USDC on Base)</option>
-          <option value="cashapp">CashApp</option>
-          <option value="venmo">Venmo</option>
-          <option value="zelle">Zelle</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin-top: var(--space-3);">
-        <label for="dep-txhash">Transaction Hash / Reference (optional)</label>
-        <input type="text" id="dep-txhash" class="form-input" placeholder="0x... or CashApp ref">
+        <label for="dep-txhash">Transaction Hash (required)</label>
+        <input type="text" id="dep-txhash" class="form-input" placeholder="0x...">
       </div>
       <div class="form-group" style="margin-top: var(--space-3);">
         <label for="dep-note">Note (optional)</label>
-        <input type="text" id="dep-note" class="form-input" placeholder="e.g. CashApp @myhandle">
+        <input type="text" id="dep-note" class="form-input" placeholder="Any additional info...">
       </div>
     `, [
       { label: 'Cancel', class: 'btn-outline', action: () => {} },
       {
         label: 'Submit Request', class: 'btn-gold', action: async () => {
           const amount = parseFloat(document.getElementById('dep-amount').value);
+          const txHash = document.getElementById('dep-txhash').value.trim();
           if (!amount || amount <= 0) { showToast('Enter a valid amount', 'error'); return; }
+          if (!txHash) { showToast('Transaction hash is required', 'error'); return; }
           try {
             await api('/fund-requests', 'POST', {
               type: 'deposit',
               amount,
-              method: document.getElementById('dep-method').value,
-              tx_hash: document.getElementById('dep-txhash').value.trim(),
+              tx_hash: txHash,
               note: document.getElementById('dep-note').value.trim()
             });
-            showToast('Deposit request submitted! Admin will review shortly.', 'success');
+            showToast('Deposit request submitted! Admin will verify your transaction shortly.', 'success');
             loadFundRequests();
           } catch (err) {
             showToast(err.message, 'error');
@@ -1277,28 +1328,25 @@
   // Withdraw button
   document.getElementById('withdraw-btn').addEventListener('click', () => {
     const available = walletData ? walletData.available : 0;
-    showModal('Request Withdrawal', `
+    const isAutoEnabled = hotWalletInfo && hotWalletInfo.auto_withdraw_enabled;
+    const instantNote = isAutoEnabled
+      ? `<div style="margin-bottom: var(--space-3); padding: var(--space-3); background: rgba(var(--color-success-rgb, 72,199,142), 0.12); border: 1px solid var(--color-success, #48c78e); border-radius: 8px; font-size: var(--text-sm);">
+           &#x26A1; <strong>Instant transfer available</strong> &mdash; Crypto withdrawals will be sent on-chain automatically.
+         </div>`
+      : '';
+    showModal('Request Withdrawal (USDC)', `
+      ${instantNote}
       <p style="margin-bottom: var(--space-4); font-size: var(--text-sm); color: var(--color-text-muted);">
-        Submit a withdrawal request. An admin will send funds externally and mark it complete.
-        Available balance: <strong style="color: var(--color-gold);">${formatUSDC(available)} USDC</strong>
+        Available balance: <strong style="color: var(--color-gold);">${formatUSDC(available)} USDC</strong><br>
+        Withdrawals are sent as USDC on Base L2 to your wallet address.
       </p>
       <div class="form-group">
         <label for="wd-amount">Amount (USDC)</label>
         <input type="number" id="wd-amount" class="form-input" placeholder="e.g. 25" min="0.01" step="0.01" max="${available}">
       </div>
       <div class="form-group" style="margin-top: var(--space-3);">
-        <label for="wd-method">Payment Method</label>
-        <select id="wd-method" class="form-select">
-          <option value="crypto">Crypto (USDC on Base)</option>
-          <option value="cashapp">CashApp</option>
-          <option value="venmo">Venmo</option>
-          <option value="zelle">Zelle</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div class="form-group" style="margin-top: var(--space-3);">
-        <label for="wd-address">Wallet Address / Payment Info</label>
-        <input type="text" id="wd-address" class="form-input" placeholder="0x... or $CashTag or @VenmoHandle">
+        <label for="wd-address">Base L2 Wallet Address (required)</label>
+        <input type="text" id="wd-address" class="form-input" placeholder="0x...">
       </div>
       <div class="form-group" style="margin-top: var(--space-3);">
         <label for="wd-note">Note (optional)</label>
@@ -1307,21 +1355,41 @@
     `, [
       { label: 'Cancel', class: 'btn-outline', action: () => {} },
       {
-        label: 'Submit Request', class: 'btn-outline', action: async () => {
+        label: 'Submit Request', class: 'btn-gold', action: async () => {
           const amount = parseFloat(document.getElementById('wd-amount').value);
           const externalAddress = document.getElementById('wd-address').value.trim();
           if (!amount || amount <= 0) { showToast('Enter a valid amount', 'error'); return; }
-          if (!externalAddress) { showToast('Enter your wallet address or payment info', 'error'); return; }
+          if (!externalAddress) { showToast('Enter your Base L2 wallet address', 'error'); return; }
           try {
-            await api('/fund-requests', 'POST', {
+            const result = await api('/fund-requests', 'POST', {
               type: 'withdraw',
               amount,
-              method: document.getElementById('wd-method').value,
               external_address: externalAddress,
               note: document.getElementById('wd-note').value.trim()
             });
-            showToast('Withdrawal request submitted! Admin will process it.', 'success');
-            loadFundRequests();
+            if (result.auto_transferred && result.tx_hash) {
+              await refreshUserBalance();
+              loadFundRequests();
+              showModal('Transfer Complete', `
+                <p style="font-size: var(--text-sm); color: var(--color-text-muted); margin-bottom: var(--space-3);">
+                  Your USDC has been sent instantly on Base L2.
+                </p>
+                <div class="form-group">
+                  <label>Transaction Hash</label>
+                  <div style="padding: var(--space-3); background: var(--color-bg); border-radius: 8px; word-break: break-all; font-family: monospace; font-size: var(--text-xs);">${escHtml(result.tx_hash)}</div>
+                </div>
+                <a href="${escHtml(result.explorer_url)}" target="_blank" rel="noopener" class="btn btn-gold" style="margin-top: var(--space-3); display: inline-flex; align-items: center; gap: var(--space-2); text-decoration: none;">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                  View on BaseScan
+                </a>
+              `, [{ label: 'Close', class: 'btn-outline', action: () => {} }]);
+            } else if (result.auto_transferred === false) {
+              showToast('Withdrawal queued for admin review: ' + (result.fallback_reason || 'auto-transfer unavailable'), 'info', 6000);
+              loadFundRequests();
+            } else {
+              showToast('Withdrawal request submitted! Admin will process it.', 'success');
+              loadFundRequests();
+            }
           } catch (err) {
             showToast(err.message, 'error');
           }
@@ -1356,7 +1424,6 @@
 
       const typeClass = req.type === 'deposit' ? 'badge-deposit' : 'badge-withdraw';
       const statusClass = `badge-fr-${req.status}`;
-      const methodClass = `badge-method-${req.method || 'crypto'}`;
       const sign = req.type === 'deposit' ? '+' : '-';
       const amountClass = req.type === 'deposit' ? 'positive' : 'negative';
 
@@ -1364,7 +1431,7 @@
         <div class="fund-request-header">
           <div class="fund-request-meta">
             <span class="badge ${typeClass}">${capitalizeFirst(req.type)}</span>
-            <span class="badge ${methodClass}">${capitalizeFirst(req.method || 'crypto')}</span>
+            <span class="badge badge-method-crypto">Crypto (USDC)</span>
             <span class="badge ${statusClass}">${capitalizeFirst(req.status)}</span>
           </div>
           <span class="tx-amount ${amountClass}">${sign}${formatUSDC(req.amount)} USDC</span>
@@ -1502,10 +1569,12 @@
     if (!tbody) return;
     tbody.innerHTML = '';
     users.forEach(u => {
+      const isSelf = u.id === currentUser.user_id;
+      const canDelete = !u.is_admin && !isSelf;
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td>${u.id}</td>
-        <td class="admin-td-username">${escHtml(u.username)}</td>
+        <td class="admin-td-username">${escHtml(u.username)}${isSelf ? ' <span class="badge badge-status-posted" style="font-size:var(--text-xs);">You</span>' : ''}</td>
         <td>${formatUSDC(u.balance)}</td>
         <td>${formatUSDC(u.available)}</td>
         <td>
@@ -1516,6 +1585,7 @@
             ${u.is_admin ? 'Remove Admin' : 'Make Admin'}
           </button>
           <button class="btn btn-outline btn-sm admin-adjust-bal" data-user-id="${u.id}">Adjust Balance</button>
+          ${canDelete ? `<button class="btn btn-danger btn-sm admin-delete-user" data-user-id="${u.id}" data-username="${escHtml(u.username)}">Delete</button>` : ''}
         </td>
       `;
       tbody.appendChild(tr);
@@ -1525,6 +1595,7 @@
   document.getElementById('admin-users-tbody').addEventListener('click', async (e) => {
     const toggleBtn = e.target.closest('.admin-toggle-admin');
     const adjustBtn = e.target.closest('.admin-adjust-bal');
+    const deleteBtn = e.target.closest('.admin-delete-user');
 
     if (toggleBtn) {
       const userId = parseInt(toggleBtn.dataset.userId);
@@ -1537,6 +1608,32 @@
         showToast(err.message, 'error');
         toggleBtn.disabled = false;
       }
+    }
+
+    if (deleteBtn) {
+      const userId = parseInt(deleteBtn.dataset.userId);
+      const username = deleteBtn.dataset.username;
+      showModal('Delete User', `
+        <p style="font-size: var(--text-sm); color: var(--color-text-muted); margin-bottom: var(--space-3);">
+          Are you sure you want to permanently delete <strong style="color: var(--color-text);">${escHtml(username)}</strong>?
+        </p>
+        <p style="font-size: var(--text-sm); color: var(--color-burgundy);">
+          This will cancel all their active quests (with escrow refunds), delete all their fund requests, transactions, and their account. This cannot be undone.
+        </p>
+      `, [
+        { label: 'Cancel', class: 'btn-outline', action: () => {} },
+        {
+          label: 'Delete User', class: 'btn-danger', action: async () => {
+            try {
+              await api('/admin/users/delete', 'POST', { target_user_id: userId });
+              showToast(`User "${username}" deleted.`, 'success');
+              loadAdminUsers();
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
+          }
+        }
+      ]);
     }
 
     if (adjustBtn) {
@@ -1618,7 +1715,8 @@
           ${quest.status === 'submitted' ? `<button class="btn btn-danger btn-sm admin-dispute-quest" data-quest-id="${quest.id}">Dispute</button>` : ''}
           ${isOOBSubmitted ? `<button class="btn btn-gold btn-sm admin-confirm-oob-payment" data-quest-id="${quest.id}">Confirm Payment</button>` : ''}
           ${!['approved','cancelled'].includes(quest.status) ? `<button class="btn btn-outline btn-sm admin-cancel-quest" data-quest-id="${quest.id}">Cancel</button>` : ''}
-          <button class="btn btn-outline btn-sm admin-edit-quest" data-quest-id="${quest.id}" data-quest='${JSON.stringify({id:quest.id,title:quest.title,description:quest.description,category:quest.category,difficulty:quest.difficulty,min_reward:quest.min_reward,max_reward:quest.max_reward})}'>Edit</button>
+          <button class="btn btn-outline btn-sm admin-edit-quest" data-quest-id="${quest.id}" data-quest='${JSON.stringify({id:quest.id,title:quest.title,description:quest.description,category:quest.category,difficulty:quest.difficulty,min_reward:quest.min_reward,max_reward:quest.max_reward,escalation_type:quest.escalation_type,escalation_period_hours:quest.escalation_period_hours,status:quest.status,payment_method:quest.payment_method||'platform'})}'>Edit</button>
+          <button class="btn btn-outline btn-sm admin-view-changelog" data-quest-id="${quest.id}" data-quest-title="${escHtml(quest.title)}">Changelog</button>
         </div>
       `;
       container.appendChild(item);
@@ -1631,6 +1729,7 @@
     const cancelBtn = e.target.closest('.admin-cancel-quest');
     const editBtn = e.target.closest('.admin-edit-quest');
     const confirmOOBBtn = e.target.closest('.admin-confirm-oob-payment');
+    const changelogBtn = e.target.closest('.admin-view-changelog');
 
     if (approveBtn) {
       const questId = parseInt(approveBtn.dataset.questId);
@@ -1698,6 +1797,40 @@
       showAdminEditQuestModalAdmin(quest);
     }
 
+    if (changelogBtn) {
+      const questId = parseInt(changelogBtn.dataset.questId);
+      const questTitle = changelogBtn.dataset.questTitle;
+      try {
+        const data = await api(`/admin/quests/changelog?quest_id=${questId}`);
+        const entries = data.changelog || [];
+        let changelogHTML;
+        if (entries.length === 0) {
+          changelogHTML = '<p style="color: var(--color-text-muted); font-size: var(--text-sm);">No changes recorded yet.</p>';
+        } else {
+          changelogHTML = `<div style="max-height: 400px; overflow-y: auto;">`;
+          entries.forEach(entry => {
+            changelogHTML += `
+              <div style="padding: var(--space-3); border-bottom: 1px solid var(--color-border); font-size: var(--text-sm);">
+                <div style="display:flex; justify-content:space-between; margin-bottom: var(--space-1);">
+                  <strong style="color: var(--color-text);">${escHtml(entry.field_name)}</strong>
+                  <span style="color: var(--color-text-faint); font-size: var(--text-xs);">${timeAgo(entry.changed_at)} by ${escHtml(entry.changer_username)}</span>
+                </div>
+                <div style="display:flex; align-items:center; gap: var(--space-2); flex-wrap:wrap;">
+                  <span style="color: var(--color-burgundy); text-decoration: line-through; font-family: monospace; font-size: var(--text-xs); max-width: 45%; overflow-wrap: break-word;">${escHtml(entry.old_value || '(empty)')}</span>
+                  <span style="color: var(--color-text-muted);">&#8594;</span>
+                  <span style="color: var(--color-success, #48c78e); font-family: monospace; font-size: var(--text-xs); max-width: 45%; overflow-wrap: break-word;">${escHtml(entry.new_value || '(empty)')}</span>
+                </div>
+              </div>
+            `;
+          });
+          changelogHTML += '</div>';
+        }
+        showModal(`Changelog: ${questTitle}`, changelogHTML, [{ label: 'Close', class: 'btn-outline', action: () => {} }]);
+      } catch (err) {
+        showToast(err.message, 'error');
+      }
+    }
+
     if (confirmOOBBtn) {
       const questId = parseInt(confirmOOBBtn.dataset.questId);
       showModal('Confirm OOB Payment', `
@@ -1735,12 +1868,68 @@
       </div>
       <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-3);">
         <div class="form-group">
-          <label for="admin-edit-min-2">Min Reward</label>
+          <label for="admin-edit-cat-2">Category</label>
+          <select id="admin-edit-cat-2" class="form-select">
+            <option value="Chores"${quest.category === 'Chores' ? ' selected' : ''}>Chores</option>
+            <option value="Errands"${quest.category === 'Errands' ? ' selected' : ''}>Errands</option>
+            <option value="Projects"${quest.category === 'Projects' ? ' selected' : ''}>Projects</option>
+            <option value="Favors"${quest.category === 'Favors' ? ' selected' : ''}>Favors</option>
+            <option value="Learning"${quest.category === 'Learning' ? ' selected' : ''}>Learning</option>
+            <option value="Creative"${quest.category === 'Creative' ? ' selected' : ''}>Creative</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="admin-edit-diff-2">Difficulty</label>
+          <select id="admin-edit-diff-2" class="form-select">
+            <option value="Easy"${quest.difficulty === 'Easy' ? ' selected' : ''}>Easy</option>
+            <option value="Medium"${quest.difficulty === 'Medium' ? ' selected' : ''}>Medium</option>
+            <option value="Hard"${quest.difficulty === 'Hard' ? ' selected' : ''}>Hard</option>
+            <option value="Epic"${quest.difficulty === 'Epic' ? ' selected' : ''}>Epic</option>
+          </select>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-3);">
+        <div class="form-group">
+          <label for="admin-edit-min-2">Min Reward (USDC)</label>
           <input type="number" id="admin-edit-min-2" class="form-input" value="${quest.min_reward}" step="0.01">
         </div>
         <div class="form-group">
-          <label for="admin-edit-max-2">Max Reward</label>
+          <label for="admin-edit-max-2">Max Reward (USDC)</label>
           <input type="number" id="admin-edit-max-2" class="form-input" value="${quest.max_reward}" step="0.01">
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-3);">
+        <div class="form-group">
+          <label for="admin-edit-esc-type-2">Escalation Type</label>
+          <select id="admin-edit-esc-type-2" class="form-select">
+            <option value="linear"${quest.escalation_type === 'linear' ? ' selected' : ''}>Linear</option>
+            <option value="exponential"${quest.escalation_type === 'exponential' ? ' selected' : ''}>Exponential</option>
+            <option value="stepped"${quest.escalation_type === 'stepped' ? ' selected' : ''}>Stepped</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="admin-edit-esc-hrs-2">Escalation Period (hours)</label>
+          <input type="number" id="admin-edit-esc-hrs-2" class="form-input" value="${quest.escalation_period_hours}" min="1" step="1">
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); margin-top: var(--space-3);">
+        <div class="form-group">
+          <label for="admin-edit-status-2">Status</label>
+          <select id="admin-edit-status-2" class="form-select">
+            <option value="posted"${quest.status === 'posted' ? ' selected' : ''}>Posted</option>
+            <option value="claimed"${quest.status === 'claimed' ? ' selected' : ''}>Claimed</option>
+            <option value="submitted"${quest.status === 'submitted' ? ' selected' : ''}>Submitted</option>
+            <option value="approved"${quest.status === 'approved' ? ' selected' : ''}>Approved</option>
+            <option value="disputed"${quest.status === 'disputed' ? ' selected' : ''}>Disputed</option>
+            <option value="cancelled"${quest.status === 'cancelled' ? ' selected' : ''}>Cancelled</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="admin-edit-payment-2">Payment Method</label>
+          <select id="admin-edit-payment-2" class="form-select">
+            <option value="platform"${(quest.payment_method || 'platform') === 'platform' ? ' selected' : ''}>Platform</option>
+            <option value="out_of_band"${quest.payment_method === 'out_of_band' ? ' selected' : ''}>Out of Band</option>
+          </select>
         </div>
       </div>
     `, [
@@ -1752,10 +1941,14 @@
               quest_id: quest.id,
               title: document.getElementById('admin-edit-title-2').value.trim(),
               description: document.getElementById('admin-edit-desc-2').value.trim(),
+              category: document.getElementById('admin-edit-cat-2').value,
+              difficulty: document.getElementById('admin-edit-diff-2').value,
               min_reward: parseFloat(document.getElementById('admin-edit-min-2').value),
               max_reward: parseFloat(document.getElementById('admin-edit-max-2').value),
-              category: quest.category,
-              difficulty: quest.difficulty
+              escalation_type: document.getElementById('admin-edit-esc-type-2').value,
+              escalation_period_hours: parseFloat(document.getElementById('admin-edit-esc-hrs-2').value),
+              status: document.getElementById('admin-edit-status-2').value,
+              payment_method: document.getElementById('admin-edit-payment-2').value
             });
             showToast('Quest updated.', 'success');
             loadAdminQuests();
@@ -1835,7 +2028,6 @@
 
       const typeClass = req.type === 'deposit' ? 'badge-deposit' : 'badge-withdraw';
       const statusClass = `badge-fr-${req.status}`;
-      const methodClass = `badge-method-${req.method || 'crypto'}`;
       const sign = req.type === 'deposit' ? '+' : '-';
       const amountClass = req.type === 'deposit' ? 'positive' : 'negative';
       const isPending = req.status === 'pending';
@@ -1846,7 +2038,7 @@
             <strong style="font-family: var(--font-display); color: var(--color-text);">${escHtml(req.requester_username)}</strong>
             <div style="display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-1);">
               <span class="badge ${typeClass}">${capitalizeFirst(req.type)}</span>
-              <span class="badge ${methodClass}">${capitalizeFirst(req.method || 'crypto')}</span>
+              <span class="badge badge-method-crypto">Crypto (USDC)</span>
               <span class="badge ${statusClass}">${capitalizeFirst(req.status)}</span>
             </div>
           </div>
@@ -1865,7 +2057,7 @@
           ${req.reviewer_username ? `<span style="font-size: var(--text-xs); color: var(--color-text-faint);">Reviewed by ${escHtml(req.reviewer_username)}</span>` : ''}
           ${isPending ? `
             <div class="admin-fund-req-actions">
-              <button class="btn btn-success btn-sm admin-approve-fund-req" data-req-id="${req.id}" data-type="${req.type}" data-ext="${escHtml(req.external_address || '')}" data-method="${req.method || 'crypto'}" data-amount="${req.amount}">Approve</button>
+              <button class="btn btn-success btn-sm admin-approve-fund-req" data-req-id="${req.id}" data-type="${req.type}" data-ext="${escHtml(req.external_address || '')}" data-amount="${req.amount}">Approve</button>
               <button class="btn btn-danger btn-sm admin-deny-fund-req" data-req-id="${req.id}">Deny</button>
             </div>
           ` : ''}
@@ -1884,18 +2076,17 @@
       const reqType = approveBtn.dataset.type;
       const extAddr = approveBtn.dataset.ext;
 
-      const reqMethod = approveBtn.dataset.method || 'crypto';
       let confirmMsg = `Approve this ${reqType} request?`;
       let autoTransferNote = '';
       if (reqType === 'withdraw' && extAddr) {
-        if (reqMethod === 'crypto' && hotWalletInfo && hotWalletInfo.auto_withdraw_enabled) {
+        if (hotWalletInfo && hotWalletInfo.auto_withdraw_enabled) {
           confirmMsg = `Approve withdrawal of <strong>${approveBtn.dataset.amount || ''} USDC</strong>?`;
           autoTransferNote = `<div style="margin-top: var(--space-3); padding: var(--space-3); background: var(--color-success-bg, #e8f5e9); border-radius: 8px; font-size: var(--text-sm);">
             \u26a1 <strong>Auto-transfer enabled</strong> \u2014 USDC will be sent on-chain to:<br>
             <code style="word-break:break-all; font-size: var(--text-xs);">${escHtml(extAddr)}</code>
           </div>`;
         } else {
-          confirmMsg = `Approve withdrawal? Make sure you have sent funds to: <code style="word-break:break-all;">${escHtml(extAddr)}</code>`;
+          confirmMsg = `Approve withdrawal? Manually send USDC on Base L2 to: <code style="word-break:break-all;">${escHtml(extAddr)}</code>`;
         }
       }
 

@@ -201,6 +201,17 @@ def init_db(db):
             FOREIGN KEY (user_id) REFERENCES users(id),
             FOREIGN KEY (reviewed_by) REFERENCES users(id)
         );
+        CREATE TABLE IF NOT EXISTS quest_changelog (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            quest_id INTEGER NOT NULL,
+            changed_by INTEGER NOT NULL,
+            field_name TEXT NOT NULL,
+            old_value TEXT,
+            new_value TEXT,
+            changed_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (quest_id) REFERENCES quests(id),
+            FOREIGN KEY (changed_by) REFERENCES users(id)
+        );
     """)
     db.commit()
 
@@ -908,9 +919,48 @@ def handle_create_fund_request(db, body):
         if amount > available:
             error(f"Insufficient available balance. Available: {available:.2f} USDC")
 
-    valid_methods = ['crypto', 'cashapp', 'venmo', 'zelle', 'other']
-    if method not in valid_methods:
-        method = 'other'
+    # Fund requests are crypto-only (OOB methods are only for quest payment, not deposits/withdrawals)
+    method = 'crypto'
+
+    # Feature: Fully Automatic USDC Withdrawals
+    # For crypto withdrawals with sufficient balance and configured hot wallet, attempt instant on-chain transfer
+    if req_type == 'withdraw' and HOT_WALLET_PRIVATE_KEY:
+        try:
+            on_chain_tx_hash = send_usdc(external_address, amount)
+            # Deduct balance immediately
+            db.execute("UPDATE users SET balance = balance - ? WHERE id = ?", [amount, user_id])
+            now = datetime.now(timezone.utc).isoformat()
+            note_str = f"Auto withdrawal to {external_address} | tx: {on_chain_tx_hash}"
+            db.execute("""
+                INSERT INTO transactions (from_user_id, amount, type, note)
+                VALUES (?, ?, 'withdrawal', ?)
+            """, [user_id, amount, note_str])
+            # Create the fund_request record in approved state with tx_hash
+            db.execute("""
+                INSERT INTO fund_requests (user_id, type, amount, status, tx_hash, external_address, method, note, reviewed_at)
+                VALUES (?, ?, ?, 'approved', ?, ?, ?, ?, ?)
+            """, [user_id, req_type, amount, on_chain_tx_hash, external_address or None, method, note or None, now])
+            db.commit()
+            explorer_url = f"https://basescan.org/tx/{on_chain_tx_hash}"
+            respond({
+                "message": "Withdrawal processed instantly on-chain",
+                "auto_transferred": True,
+                "tx_hash": on_chain_tx_hash,
+                "explorer_url": explorer_url
+            }, 201)
+        except (RuntimeError, Exception) as e:
+            # Fall back to pending request for admin review
+            fallback_reason = str(e)
+            db.execute("""
+                INSERT INTO fund_requests (user_id, type, amount, tx_hash, external_address, method, note)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, [user_id, req_type, amount, tx_hash or None, external_address or None, method, note or None])
+            db.commit()
+            respond({
+                "message": "Withdrawal queued for admin review",
+                "auto_transferred": False,
+                "fallback_reason": fallback_reason
+            }, 201)
 
     db.execute("""
         INSERT INTO fund_requests (user_id, type, amount, tx_hash, external_address, method, note)
@@ -976,8 +1026,7 @@ def handle_admin_review_fund_request(db, body):
         if req['type'] == 'deposit':
             # Credit user balance
             db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", [req['amount'], req['user_id']])
-            method_label = req['method'] if req['method'] else 'crypto'
-            note_str = f"Deposit via {method_label}"
+            note_str = 'Deposit via crypto (USDC)'
             if req['note']:
                 note_str += f" — {req['note']}"
             db.execute("""
@@ -1006,8 +1055,6 @@ def handle_admin_review_fund_request(db, body):
 
             db.execute("UPDATE users SET balance = balance - ? WHERE id = ?", [req['amount'], req['user_id']])
             note_str = f"Withdrawal to {ext_addr}"
-            if req['method'] and req['method'] != 'crypto':
-                note_str += f" via {req['method']}"
             if on_chain_tx_hash:
                 note_str += f" | tx: {on_chain_tx_hash}"
             db.execute("""
@@ -1142,6 +1189,61 @@ def handle_admin_adjust_balance(db, body):
     new_balance = db.execute("SELECT balance FROM users WHERE id = ?", [target_id]).fetchone()['balance']
     respond({"user_id": target_id, "new_balance": new_balance, "adjustment": amount})
 
+def handle_admin_delete_user(db, body):
+    user_id = get_user_id(body)
+    require_admin(db, user_id)
+
+    target_id = body.get('target_user_id')
+    if not target_id:
+        error("target_user_id required")
+    target_id = int(target_id)
+
+    if target_id == user_id:
+        error("Cannot delete yourself")
+
+    target = db.execute("SELECT * FROM users WHERE id = ?", [target_id]).fetchone()
+    if not target:
+        error("Target user not found", 404)
+    if target['is_admin']:
+        error("Cannot delete another admin account")
+
+    # Cancel active quests posted by this user (refund escrow)
+    active_quests = db.execute("""
+        SELECT * FROM quests WHERE poster_id = ? AND status IN ('posted', 'claimed', 'submitted', 'disputed')
+        AND payment_method = 'platform'
+    """, [target_id]).fetchall()
+    for quest in active_quests:
+        db.execute("""
+            INSERT INTO transactions (to_user_id, quest_id, amount, type, note)
+            VALUES (?, ?, ?, 'refund', 'User deletion refund')
+        """, [target_id, quest['id'], quest['max_reward']])
+
+    # Cancel all active quests by this user
+    db.execute("""
+        UPDATE quests SET status = 'cancelled'
+        WHERE poster_id = ? AND status IN ('posted', 'claimed', 'submitted', 'disputed')
+    """, [target_id])
+    # Also abandon quests claimed by this user
+    db.execute("""
+        UPDATE quests SET claimer_id = NULL, current_locked_reward = NULL, status = 'posted',
+            claimed_at = NULL, completion_note = NULL, dispute_reason = NULL,
+            poster_payment_confirmed = 0, claimer_payment_confirmed = 0
+        WHERE claimer_id = ? AND status IN ('claimed', 'submitted', 'disputed')
+    """, [target_id])
+
+    # Delete user's fund requests
+    db.execute("DELETE FROM fund_requests WHERE user_id = ?", [target_id])
+    # Delete user's transactions (from and to)
+    db.execute("DELETE FROM transactions WHERE from_user_id = ? OR to_user_id = ?", [target_id, target_id])
+    # Delete quest changelog entries by this user
+    db.execute("DELETE FROM quest_changelog WHERE changed_by = ?", [target_id])
+    # Delete the user
+    db.execute("DELETE FROM users WHERE id = ?", [target_id])
+    db.commit()
+
+    respond({"message": f"User {target['username']} deleted successfully"})
+
+
 def handle_admin_quests(db, params):
     user_id = get_user_id(params=params)
     require_admin(db, user_id)
@@ -1243,12 +1345,24 @@ def handle_admin_edit_quest(db, body):
     if not quest:
         error("Quest not found", 404)
 
-    title = body.get('title', quest['title']).strip()
-    description = body.get('description', quest['description']).strip()
+    title = body.get('title', quest['title'])
+    if title is not None:
+        title = title.strip()
+    else:
+        title = quest['title']
+    description = body.get('description', quest['description'])
+    if description is not None:
+        description = description.strip()
+    else:
+        description = quest['description']
     category = body.get('category', quest['category'])
     difficulty = body.get('difficulty', quest['difficulty'])
     min_reward = float(body.get('min_reward', quest['min_reward']))
     max_reward = float(body.get('max_reward', quest['max_reward']))
+    escalation_type = body.get('escalation_type', quest['escalation_type'])
+    escalation_period_hours = float(body.get('escalation_period_hours', quest['escalation_period_hours']))
+    new_status = body.get('status', quest['status'])
+    payment_method = body.get('payment_method', quest['payment_method'] or 'platform')
 
     valid_categories = ['Chores', 'Errands', 'Projects', 'Favors', 'Learning', 'Creative']
     if category not in valid_categories:
@@ -1258,10 +1372,62 @@ def handle_admin_edit_quest(db, body):
     if difficulty not in valid_difficulties:
         error("Invalid difficulty")
 
+    valid_escalation = ['linear', 'exponential', 'stepped']
+    if escalation_type not in valid_escalation:
+        error("Invalid escalation type")
+
+    valid_statuses = ['posted', 'claimed', 'submitted', 'approved', 'disputed', 'cancelled']
+    if new_status not in valid_statuses:
+        error("Invalid status")
+
+    valid_payment = ['platform', 'out_of_band']
+    if payment_method not in valid_payment:
+        error("Invalid payment method")
+
+    # Build changelog entries for changed fields
+    fields_to_check = [
+        ('title', quest['title'], title),
+        ('description', quest['description'], description),
+        ('category', quest['category'], category),
+        ('difficulty', quest['difficulty'], difficulty),
+        ('min_reward', str(quest['min_reward']), str(min_reward)),
+        ('max_reward', str(quest['max_reward']), str(max_reward)),
+        ('escalation_type', quest['escalation_type'], escalation_type),
+        ('escalation_period_hours', str(quest['escalation_period_hours']), str(escalation_period_hours)),
+        ('status', quest['status'], new_status),
+        ('payment_method', quest['payment_method'] or 'platform', payment_method),
+    ]
+
+    for field_name, old_val, new_val in fields_to_check:
+        if str(old_val) != str(new_val):
+            db.execute("""
+                INSERT INTO quest_changelog (quest_id, changed_by, field_name, old_value, new_value)
+                VALUES (?, ?, ?, ?, ?)
+            """, [quest_id, user_id, field_name, str(old_val), str(new_val)])
+
+    # If status changes to cancelled, refund escrow
+    if new_status == 'cancelled' and quest['status'] not in ('approved', 'cancelled'):
+        if quest['payment_method'] == 'platform' and quest['status'] in ('posted', 'claimed', 'submitted', 'disputed'):
+            db.execute("""
+                INSERT INTO transactions (to_user_id, quest_id, amount, type, note)
+                VALUES (?, ?, ?, 'refund', 'Admin edit cancellation refund')
+            """, [quest['poster_id'], quest_id, quest['max_reward']])
+
+    # If reward amounts change on an active quest, update current_locked_reward if needed
+    if quest['status'] in ('claimed', 'submitted', 'disputed') and (
+        min_reward != quest['min_reward'] or max_reward != quest['max_reward']
+    ):
+        if quest['current_locked_reward'] is not None:
+            # Clamp locked reward to new max
+            new_locked = min(float(quest['current_locked_reward']), max_reward)
+            db.execute("UPDATE quests SET current_locked_reward = ? WHERE id = ?", [new_locked, quest_id])
+
     db.execute("""
-        UPDATE quests SET title=?, description=?, category=?, difficulty=?, min_reward=?, max_reward=?
+        UPDATE quests SET title=?, description=?, category=?, difficulty=?, min_reward=?, max_reward=?,
+            escalation_type=?, escalation_period_hours=?, status=?, payment_method=?
         WHERE id=?
-    """, [title, description, category, difficulty, min_reward, max_reward, quest_id])
+    """, [title, description, category, difficulty, min_reward, max_reward,
+           escalation_type, escalation_period_hours, new_status, payment_method, quest_id])
     db.commit()
 
     quest = db.execute("""
@@ -1273,6 +1439,25 @@ def handle_admin_edit_quest(db, body):
     """, [quest_id]).fetchone()
 
     respond({"quest": dict(quest)})
+
+
+def handle_admin_quest_changelog(db, params):
+    user_id = get_user_id(params=params)
+    require_admin(db, user_id)
+
+    quest_id = params.get('quest_id')
+    if not quest_id:
+        error("quest_id required")
+
+    rows = db.execute("""
+        SELECT cl.*, u.username as changer_username
+        FROM quest_changelog cl
+        JOIN users u ON cl.changed_by = u.id
+        WHERE cl.quest_id = ?
+        ORDER BY cl.changed_at DESC
+    """, [quest_id]).fetchall()
+
+    respond({"changelog": [dict(r) for r in rows]})
 
 def handle_admin_transactions(db, params):
     user_id = get_user_id(params=params)
@@ -1347,6 +1532,8 @@ def main():
             handle_admin_toggle_admin(db, body)
         elif path == '/admin/users/adjust-balance' and method == 'POST':
             handle_admin_adjust_balance(db, body)
+        elif path == '/admin/users/delete' and method == 'POST':
+            handle_admin_delete_user(db, body)
         elif path == '/admin/quests' and method == 'GET':
             handle_admin_quests(db, params)
         elif path == '/admin/quests/approve' and method == 'POST':
@@ -1359,6 +1546,8 @@ def main():
             handle_admin_edit_quest(db, body)
         elif path == '/admin/quests/confirm-payment' and method == 'POST':
             handle_admin_confirm_payment(db, body)
+        elif path == '/admin/quests/changelog' and method == 'GET':
+            handle_admin_quest_changelog(db, params)
         elif path == '/admin/transactions' and method == 'GET':
             handle_admin_transactions(db, params)
         elif path == '/admin/fund-requests' and method == 'GET':
