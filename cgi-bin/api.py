@@ -4,6 +4,10 @@ from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data.db')
 
+# Hot wallet configuration — admin sets this to their Base L2 USDC wallet
+HOT_WALLET_ADDRESS = '0x0000000000000000000000000000000000000000'  # Replace with actual address
+HOT_WALLET_NOTE = 'Send USDC on Base L2 to this address, then submit a deposit request.'
+
 def get_db():
     db = sqlite3.connect(DB_PATH)
     db.row_factory = sqlite3.Row
@@ -19,7 +23,7 @@ def init_db(db):
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
             wallet_address TEXT NOT NULL,
-            balance REAL DEFAULT 1000.0,
+            balance REAL DEFAULT 0.0,
             created_at TEXT DEFAULT (datetime('now')),
             is_admin INTEGER DEFAULT 0,
             eth_private_key TEXT,
@@ -63,11 +67,27 @@ def init_db(db):
             FOREIGN KEY (to_user_id) REFERENCES users(id),
             FOREIGN KEY (quest_id) REFERENCES quests(id)
         );
+        CREATE TABLE IF NOT EXISTS fund_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            amount REAL NOT NULL,
+            status TEXT DEFAULT 'pending',
+            tx_hash TEXT,
+            external_address TEXT,
+            method TEXT DEFAULT 'crypto',
+            note TEXT,
+            admin_note TEXT,
+            reviewed_by INTEGER,
+            created_at TEXT DEFAULT (datetime('now')),
+            reviewed_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (reviewed_by) REFERENCES users(id)
+        );
     """)
     db.commit()
 
     # ALTER TABLE migrations for existing databases
-    # Add missing columns gracefully
     existing_user_cols = [row[1] for row in db.execute("PRAGMA table_info(users)").fetchall()]
     if 'is_admin' not in existing_user_cols:
         db.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0")
@@ -95,13 +115,30 @@ def init_db(db):
         db.execute("ALTER TABLE transactions ADD COLUMN note TEXT")
         db.commit()
 
-
-def generate_eth_wallet():
-    private_key = secrets.token_hex(32)  # 64 hex chars
-    # Deterministic address derivation using SHA-256 (for this family app)
-    addr_hash = hashlib.sha256(bytes.fromhex(private_key)).hexdigest()
-    eth_address = '0x' + addr_hash[:40]
-    return private_key, eth_address
+    # fund_requests table — create if not exists (already handled above via executescript)
+    # but we ensure the table exists for old databases that didn't have it
+    existing_tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+    if 'fund_requests' not in existing_tables:
+        db.execute("""
+            CREATE TABLE fund_requests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                amount REAL NOT NULL,
+                status TEXT DEFAULT 'pending',
+                tx_hash TEXT,
+                external_address TEXT,
+                method TEXT DEFAULT 'crypto',
+                note TEXT,
+                admin_note TEXT,
+                reviewed_by INTEGER,
+                created_at TEXT DEFAULT (datetime('now')),
+                reviewed_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (reviewed_by) REFERENCES users(id)
+            )
+        """)
+        db.commit()
 
 
 def gen_wallet():
@@ -205,11 +242,10 @@ def handle_register(db, body):
 
     wallet = gen_wallet()
     pw_hash = hash_password(password)
-    eth_private_key, eth_address = generate_eth_wallet()
 
     db.execute(
-        "INSERT INTO users (username, password_hash, wallet_address, balance, eth_private_key, eth_address) VALUES (?, ?, ?, 1000.0, ?, ?)",
-        [username, pw_hash, wallet, eth_private_key, eth_address]
+        "INSERT INTO users (username, password_hash, wallet_address, balance) VALUES (?, ?, ?, 0.0)",
+        [username, pw_hash, wallet]
     )
     db.commit()
 
@@ -218,7 +254,6 @@ def handle_register(db, body):
         "user_id": user['id'],
         "username": user['username'],
         "wallet_address": user['wallet_address'],
-        "eth_address": user['eth_address'],
         "balance": user['balance'],
         "is_admin": bool(user['is_admin']),
         "created_at": user['created_at']
@@ -244,7 +279,6 @@ def handle_login(db, body):
         "user_id": user['id'],
         "username": user['username'],
         "wallet_address": user['wallet_address'],
-        "eth_address": user['eth_address'],
         "balance": user['balance'],
         "escrowed": escrowed,
         "available": round(user['balance'] - escrowed, 2),
@@ -643,7 +677,8 @@ def handle_wallet(db, params):
         "escrowed": escrowed,
         "available": round(user['balance'] - escrowed, 2),
         "wallet_address": user['wallet_address'],
-        "eth_address": user['eth_address'],
+        "hot_wallet_address": HOT_WALLET_ADDRESS,
+        "hot_wallet_note": HOT_WALLET_NOTE,
         "transactions": [dict(t) for t in transactions]
     })
 
@@ -668,7 +703,6 @@ def handle_profile(db, params):
         "user_id": user['id'],
         "username": user['username'],
         "wallet_address": user['wallet_address'],
-        "eth_address": user['eth_address'],
         "balance": user['balance'],
         "escrowed": escrowed,
         "available": round(user['balance'] - escrowed, 2),
@@ -679,6 +713,168 @@ def handle_profile(db, params):
     })
 
 # ============================================================
+# HOT WALLET ENDPOINTS
+# ============================================================
+
+def handle_hot_wallet(db, params):
+    respond({
+        "address": HOT_WALLET_ADDRESS,
+        "note": HOT_WALLET_NOTE,
+        "network": "Base L2",
+        "token": "USDC"
+    })
+
+def handle_create_fund_request(db, body):
+    user_id = get_user_id(body)
+    req_type = body.get('type')  # 'deposit' or 'withdraw'
+    amount = float(body.get('amount', 0))
+    tx_hash = body.get('tx_hash', '').strip()
+    external_address = body.get('external_address', '').strip()
+    method = body.get('method', 'crypto')
+    note = body.get('note', '').strip()
+
+    if req_type not in ('deposit', 'withdraw'):
+        error("Type must be 'deposit' or 'withdraw'")
+    if amount <= 0:
+        error("Amount must be positive")
+
+    if req_type == 'withdraw':
+        if not external_address:
+            error("External wallet address / payment info required for withdrawals")
+        # Check user has sufficient available balance
+        user = db.execute("SELECT * FROM users WHERE id = ?", [user_id]).fetchone()
+        escrowed = get_escrowed(db, user_id)
+        available = user['balance'] - escrowed
+        if amount > available:
+            error(f"Insufficient available balance. Available: {available:.2f} USDC")
+
+    valid_methods = ['crypto', 'cashapp', 'venmo', 'zelle', 'other']
+    if method not in valid_methods:
+        method = 'other'
+
+    db.execute("""
+        INSERT INTO fund_requests (user_id, type, amount, tx_hash, external_address, method, note)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, [user_id, req_type, amount, tx_hash or None, external_address or None, method, note or None])
+    db.commit()
+
+    respond({"message": f"{req_type.capitalize()} request submitted for review"}, 201)
+
+def handle_get_fund_requests(db, params):
+    user_id = get_user_id(params=params)
+    rows = db.execute("""
+        SELECT fr.*, r.username as reviewer_username
+        FROM fund_requests fr
+        LEFT JOIN users r ON fr.reviewed_by = r.id
+        WHERE fr.user_id = ?
+        ORDER BY fr.created_at DESC
+    """, [user_id]).fetchall()
+    respond({"requests": [dict(r) for r in rows]})
+
+def handle_admin_fund_requests(db, params):
+    user_id = get_user_id(params=params)
+    require_admin(db, user_id)
+    status_filter = params.get('status', '')
+
+    query = """
+        SELECT fr.*, u.username as requester_username, r.username as reviewer_username
+        FROM fund_requests fr
+        JOIN users u ON fr.user_id = u.id
+        LEFT JOIN users r ON fr.reviewed_by = r.id
+    """
+    args = []
+    if status_filter:
+        query += " WHERE fr.status = ?"
+        args.append(status_filter)
+    query += " ORDER BY fr.created_at DESC LIMIT 200"
+
+    rows = db.execute(query, args).fetchall()
+    respond({"requests": [dict(r) for r in rows]})
+
+def handle_admin_review_fund_request(db, body):
+    user_id = get_user_id(body)
+    require_admin(db, user_id)
+
+    request_id = body.get('request_id')
+    action = body.get('action')  # 'approve' or 'deny'
+    admin_note = body.get('admin_note', '').strip()
+
+    if not request_id:
+        error("request_id required")
+    if action not in ('approve', 'deny'):
+        error("action must be 'approve' or 'deny'")
+
+    req = db.execute("SELECT * FROM fund_requests WHERE id = ?", [request_id]).fetchone()
+    if not req:
+        error("Request not found", 404)
+    if req['status'] != 'pending':
+        error("Request already reviewed")
+
+    now = datetime.now(timezone.utc).isoformat()
+
+    if action == 'approve':
+        if req['type'] == 'deposit':
+            # Credit user balance
+            db.execute("UPDATE users SET balance = balance + ? WHERE id = ?", [req['amount'], req['user_id']])
+            method_label = req['method'] if req['method'] else 'crypto'
+            note_str = f"Deposit via {method_label}"
+            if req['note']:
+                note_str += f" — {req['note']}"
+            db.execute("""
+                INSERT INTO transactions (to_user_id, amount, type, note)
+                VALUES (?, ?, 'deposit', ?)
+            """, [req['user_id'], req['amount'], note_str])
+        elif req['type'] == 'withdraw':
+            # Debit user balance
+            user = db.execute("SELECT * FROM users WHERE id = ?", [req['user_id']]).fetchone()
+            escrowed = get_escrowed(db, req['user_id'])
+            available = user['balance'] - escrowed
+            if req['amount'] > available:
+                error(f"User no longer has sufficient balance. Available: {available:.2f}")
+            db.execute("UPDATE users SET balance = balance - ? WHERE id = ?", [req['amount'], req['user_id']])
+            ext_addr = req['external_address'] if req['external_address'] else 'N/A'
+            note_str = f"Withdrawal to {ext_addr}"
+            if req['method'] and req['method'] != 'crypto':
+                note_str += f" via {req['method']}"
+            db.execute("""
+                INSERT INTO transactions (from_user_id, amount, type, note)
+                VALUES (?, ?, 'withdrawal', ?)
+            """, [req['user_id'], req['amount'], note_str])
+
+    db.execute("""
+        UPDATE fund_requests SET status = ?, admin_note = ?, reviewed_by = ?, reviewed_at = ?
+        WHERE id = ?
+    """, [('approved' if action == 'approve' else 'denied'), admin_note or None, user_id, now, request_id])
+    db.commit()
+
+    respond({"message": f"Request {action}d"})
+
+def handle_admin_confirm_payment(db, body):
+    """Admin force-confirms both sides of an OOB quest payment."""
+    user_id = get_user_id(body)
+    require_admin(db, user_id)
+    quest_id = body.get('quest_id')
+
+    if not quest_id:
+        error("quest_id required")
+
+    quest = db.execute("SELECT * FROM quests WHERE id = ?", [quest_id]).fetchone()
+    if not quest:
+        error("Quest not found", 404)
+    if quest['payment_method'] != 'out_of_band':
+        error("Not an out-of-band quest")
+    if quest['status'] != 'submitted':
+        error("Quest must be in submitted status")
+
+    # Admin force-confirms both sides
+    db.execute("UPDATE quests SET poster_payment_confirmed = 1, claimer_payment_confirmed = 1 WHERE id = ?", [quest_id])
+    db.commit()
+
+    # Now auto-approve
+    result = do_approve_quest(db, quest_id)
+    respond({"quest": result, "admin_confirmed": True})
+
+# ============================================================
 # ADMIN ENDPOINTS
 # ============================================================
 
@@ -687,7 +883,7 @@ def handle_admin_users(db, params):
     require_admin(db, user_id)
 
     users = db.execute("""
-        SELECT u.id, u.username, u.balance, u.is_admin, u.created_at, u.eth_address,
+        SELECT u.id, u.username, u.balance, u.is_admin, u.created_at,
                COALESCE((SELECT SUM(max_reward) FROM quests
                          WHERE poster_id = u.id AND status IN ('posted','claimed','submitted')
                          AND payment_method = 'platform'), 0) as escrowed
@@ -948,6 +1144,12 @@ def main():
             handle_wallet(db, params)
         elif path == '/profile' and method == 'GET':
             handle_profile(db, params)
+        elif path == '/hot-wallet' and method == 'GET':
+            handle_hot_wallet(db, params)
+        elif path == '/fund-requests' and method == 'POST':
+            handle_create_fund_request(db, body)
+        elif path == '/fund-requests' and method == 'GET':
+            handle_get_fund_requests(db, params)
         # Admin endpoints
         elif path == '/admin/users' and method == 'GET':
             handle_admin_users(db, params)
@@ -965,8 +1167,14 @@ def main():
             handle_admin_cancel_quest(db, body)
         elif path == '/admin/quests/edit' and method == 'POST':
             handle_admin_edit_quest(db, body)
+        elif path == '/admin/quests/confirm-payment' and method == 'POST':
+            handle_admin_confirm_payment(db, body)
         elif path == '/admin/transactions' and method == 'GET':
             handle_admin_transactions(db, params)
+        elif path == '/admin/fund-requests' and method == 'GET':
+            handle_admin_fund_requests(db, params)
+        elif path == '/admin/fund-requests/review' and method == 'POST':
+            handle_admin_review_fund_request(db, body)
         else:
             error(f"Unknown endpoint: {method} {path}", 404)
     finally:

@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "drive_id": "999c117f-aa77-462b-8e1d-e6239f456c78",
+  "name": "bounty-board-v3",
+  "description": "Bounty Board v3 — Hot Wallet model with fund request system",
+  "tags": [
+    "bounty-board",
+    "webapp",
+    "hot-wallet",
+    "usdc",
+    "family-app",
+    "rpg"
+  ],
+  "created_at": "2026-03-09T16:18:49.957782+00:00",
+  "updated_at": "2026-03-09T16:18:49.957782+00:00",
+  "parent_project": null,
+  "sessions": [
+    {
+      "session_id": "d13cc293-b454-41b2-8850-7b3ae62490f7/subagents/build_bounty_board_v3_hot_wallet_20260309_160852",
+      "timestamp": "2026-03-09T16:18:49.957782+00:00",
+      "summary": "Updated all four files (api.py, index.html, app.js, style.css) to implement the hot wallet model: single shared USDC address on Base L2, manual deposit/withdraw request system with admin review, fund_requests table, new admin Fund Requests tab, OOB quest admin confirm-payment endpoint, removed per-user ETH wallets, new users start at $0."
+    }
+  ]
+}

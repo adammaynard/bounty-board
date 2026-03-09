@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="./base.css">
   <link rel="stylesheet" href="./style.css">
-  <!-- QR Code library for ETH wallet -->
+  <!-- QR Code library for hot wallet address -->
   <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 </head>
 <body>
@@ -96,7 +96,7 @@
               <circle cx="12" cy="12" r="8" fill="currentColor"/>
               <text x="12" y="16" text-anchor="middle" font-size="10" fill="var(--color-text-inverse)" font-weight="bold">$</text>
             </svg>
-            <span id="nav-balance-amount">1000.00</span>
+            <span id="nav-balance-amount">0.00</span>
           </div>
           <span class="nav-username" id="nav-username">adventurer</span>
           <button class="theme-toggle" data-theme-toggle aria-label="Switch to dark mode">
@@ -239,9 +239,9 @@
               <label for="quest-payment-method">Payment Method</label>
               <select id="quest-payment-method" class="form-select">
                 <option value="platform">Platform Balance (USDC Escrow)</option>
-                <option value="out_of_band">Out of Band (Cash, Venmo, etc.)</option>
+                <option value="out_of_band">Out of Band (CashApp, Venmo, cash, etc.)</option>
               </select>
-              <p class="form-hint" id="payment-method-hint">Reward will be escrowed from your balance. Both parties confirm on-chain.</p>
+              <p class="form-hint" id="payment-method-hint">Reward will be escrowed from your platform balance.</p>
             </div>
             <div class="escalation-preview" id="escalation-preview">
               <h4>Reward Escalation Preview</h4>
@@ -293,17 +293,30 @@
         <div id="page-wallet" class="page hidden">
           <div class="page-header">
             <h2 class="page-title">Adventurer's Vault</h2>
-            <p class="page-subtitle">Manage your USDC treasury and ETH wallet</p>
+            <p class="page-subtitle">Manage your USDC treasury and fund requests</p>
           </div>
           <div class="wallet-grid" id="wallet-stats">
             <!-- Rendered by JS -->
           </div>
-          <!-- Fund Wallet Card -->
+
+          <!-- Deposit & Withdraw Actions -->
+          <div class="wallet-actions-row">
+            <button class="btn btn-gold" id="deposit-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 19 19 12"/></svg>
+              Deposit Funds
+            </button>
+            <button class="btn btn-outline" id="withdraw-btn">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 5 5 12"/></svg>
+              Withdraw Funds
+            </button>
+          </div>
+
+          <!-- Hot Wallet Deposit Info -->
           <div class="fund-wallet-card" id="fund-wallet-card">
             <div class="fund-wallet-header">
               <div>
-                <h3 class="fund-wallet-title">Fund Your Wallet</h3>
-                <p class="fund-wallet-subtitle">Send ETH or tokens to this address on Base L2</p>
+                <h3 class="fund-wallet-title">Deposit via USDC</h3>
+                <p class="fund-wallet-subtitle">Send USDC to this address on Base L2, then submit a deposit request</p>
               </div>
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-gold); flex-shrink: 0;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
             </div>
@@ -312,18 +325,25 @@
                 <!-- QR code rendered by JS -->
               </div>
               <div class="eth-address-block">
-                <label class="eth-address-label">Your ETH Address</label>
+                <label class="eth-address-label">Hot Wallet Address (Base L2 · USDC)</label>
                 <div class="eth-address-display" id="eth-address-display">
-                  <code class="eth-address-text" id="eth-address-text">Loading...</code>
-                  <button class="btn-copy" id="eth-address-copy" title="Copy address" onclick="copyEthAddress()">
+                  <code class="eth-address-text" id="hot-wallet-address-text">Loading...</code>
+                  <button class="btn-copy" id="hot-wallet-copy" title="Copy address">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   </button>
                 </div>
-                <p class="eth-address-note">This address is unique to your account. Share it to receive payments.</p>
+                <p class="eth-address-note" id="hot-wallet-note">Loading...</p>
               </div>
             </div>
           </div>
-          <h3 class="section-heading">Transaction Ledger</h3>
+
+          <!-- My Fund Requests -->
+          <h3 class="section-heading">My Fund Requests</h3>
+          <div id="fund-requests-list" class="fund-requests-list">
+            <!-- Rendered by JS -->
+          </div>
+
+          <h3 class="section-heading" style="margin-top: var(--space-8);">Transaction Ledger</h3>
           <div id="tx-list" class="tx-list">
             <!-- Rendered by JS -->
           </div>
@@ -355,12 +375,13 @@
         <div id="page-admin" class="page hidden">
           <div class="page-header">
             <h2 class="page-title">Admin Panel</h2>
-            <p class="page-subtitle">Manage users, quests, and transactions</p>
+            <p class="page-subtitle">Manage users, quests, transactions, and fund requests</p>
           </div>
           <div class="tabs" id="admin-tabs">
             <button class="tab-btn active" data-admin-tab="users">Users</button>
             <button class="tab-btn" data-admin-tab="quests">All Quests</button>
             <button class="tab-btn" data-admin-tab="transactions">Transactions</button>
+            <button class="tab-btn" data-admin-tab="fund-requests">Fund Requests</button>
           </div>
 
           <!-- Admin Users Tab -->
@@ -373,7 +394,6 @@
                     <th>Username</th>
                     <th>Balance</th>
                     <th>Available</th>
-                    <th>ETH Address</th>
                     <th>Admin</th>
                     <th>Actions</th>
                   </tr>
@@ -414,6 +434,21 @@
               </table>
             </div>
           </div>
+
+          <!-- Admin Fund Requests Tab -->
+          <div id="admin-tab-fund-requests" class="admin-tab-content hidden">
+            <div class="admin-fund-requests-filters" style="margin-bottom: var(--space-4);">
+              <select id="admin-fund-filter" class="form-select" style="max-width: 200px;">
+                <option value="">All</option>
+                <option value="pending" selected>Pending</option>
+                <option value="approved">Approved</option>
+                <option value="denied">Denied</option>
+              </select>
+            </div>
+            <div id="admin-fund-requests-list" class="admin-fund-requests-list">
+              <!-- Rendered by JS -->
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -432,17 +467,5 @@
   </div>
 
   <script src="./app.js"></script>
-  <script>
-    function copyEthAddress() {
-      const addr = document.getElementById('eth-address-text').textContent;
-      if (addr && addr !== 'Loading...' && addr !== 'Not available') {
-        navigator.clipboard.writeText(addr).then(() => {
-          const btn = document.getElementById('eth-address-copy');
-          btn.style.color = 'var(--color-success)';
-          setTimeout(() => { btn.style.color = ''; }, 1500);
-        });
-      }
-    }
-  </script>
 </body>
 </html>

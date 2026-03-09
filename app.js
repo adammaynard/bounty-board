@@ -1,5 +1,5 @@
 /* ============================================
-   BOUNTY BOARD v2 — Main Application
+   BOUNTY BOARD v3 — Main Application
    ============================================ */
 
 (function () {
@@ -8,7 +8,7 @@
   const API = `__CGI_BIN__/api.py`;
 
   // ---- State ----
-  let currentUser = null;  // { user_id, username, wallet_address, eth_address, balance, escrowed, available, is_admin }
+  let currentUser = null;  // { user_id, username, wallet_address, balance, escrowed, available, is_admin }
   let quests = [];
   let myQuests = { posted: [], claimed: [] };
   let walletData = null;
@@ -17,6 +17,7 @@
   let currentTab = 'posted';
   let adminTab = 'users';
   let rewardTimerId = null;
+  let hotWalletInfo = null; // { address, note, network, token }
 
   // ---- API Helpers ----
   async function api(path, method = 'GET', body = null) {
@@ -38,6 +39,18 @@
       if (!res.ok) {
         throw new Error(data.error || 'Request failed');
       }
+      return data;
+    } catch (e) {
+      throw e;
+    }
+  }
+
+  // Public GET (no user_id appended)
+  async function apiPublic(path) {
+    try {
+      const res = await fetch(`${API}${path}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Request failed');
       return data;
     } catch (e) {
       throw e;
@@ -213,10 +226,9 @@
         user_id: data.user_id,
         username: data.username,
         wallet_address: data.wallet_address,
-        eth_address: data.eth_address || null,
         balance: data.balance,
         escrowed: data.escrowed || 0,
-        available: data.available || data.balance,
+        available: data.available !== undefined ? data.available : data.balance,
         is_admin: data.is_admin || false
       };
       enterApp();
@@ -243,7 +255,7 @@
   }
 
   function updateNavBalance() {
-    document.getElementById('nav-balance-amount').textContent = formatUSDC(currentUser.available || currentUser.balance);
+    document.getElementById('nav-balance-amount').textContent = formatUSDC(currentUser.available !== undefined ? currentUser.available : currentUser.balance);
   }
 
   // ---- Routing ----
@@ -502,10 +514,10 @@
   document.getElementById('quest-payment-method').addEventListener('change', (e) => {
     const hint = document.getElementById('payment-method-hint');
     if (e.target.value === 'out_of_band') {
-      hint.textContent = 'No escrow required. Both poster and claimer confirm payment externally when quest is done.';
+      hint.textContent = 'Payment handled externally (CashApp, Venmo, cash). Requires confirmation from both parties or an admin.';
       hint.style.color = 'var(--color-gold)';
     } else {
-      hint.textContent = 'Reward will be escrowed from your balance. Both parties confirm on-chain.';
+      hint.textContent = 'Reward will be escrowed from your platform balance.';
       hint.style.color = '';
     }
   });
@@ -572,7 +584,7 @@
       e.target.reset();
       updateEscalationPreview();
       // Reset payment method hint
-      document.getElementById('payment-method-hint').textContent = 'Reward will be escrowed from your balance. Both parties confirm on-chain.';
+      document.getElementById('payment-method-hint').textContent = 'Reward will be escrowed from your platform balance.';
       document.getElementById('payment-method-hint').style.color = '';
       await refreshUserBalance();
       navigateTo('board');
@@ -667,7 +679,6 @@
 
     if (quest.status === 'submitted' && isMyPosted) {
       if (isOOB) {
-        // OOB: show payment confirmation button instead of approve
         const posterConfirmed = quest.poster_payment_confirmed;
         actionsHTML = `
           <div class="oob-confirm-section">
@@ -696,7 +707,6 @@
         <button class="btn btn-outline btn-sm action-abandon" data-quest-id="${quest.id}">Abandon</button>
       `;
     } else if (quest.status === 'submitted' && isMyClaimed && isOOB) {
-      // Claimer can also confirm OOB payment
       const claimerConfirmed = quest.claimer_payment_confirmed;
       actionsHTML = `
         <div class="oob-confirm-section">
@@ -717,11 +727,13 @@
     // Admin actions on list items
     let adminActionsHTML = '';
     if (currentUser.is_admin) {
+      const isOOBSubmitted = isOOB && quest.status === 'submitted';
       adminActionsHTML = `
         <div class="admin-quest-actions">
           <span class="admin-badge">Admin</span>
           ${quest.status === 'submitted' ? `<button class="btn btn-success btn-sm admin-approve-quest" data-quest-id="${quest.id}">Admin Approve</button>` : ''}
           ${quest.status === 'submitted' ? `<button class="btn btn-danger btn-sm admin-dispute-quest" data-quest-id="${quest.id}">Admin Dispute</button>` : ''}
+          ${isOOBSubmitted ? `<button class="btn btn-gold btn-sm admin-confirm-oob-payment" data-quest-id="${quest.id}">Confirm Payment</button>` : ''}
           ${!['approved','cancelled'].includes(quest.status) ? `<button class="btn btn-outline btn-sm admin-cancel-quest" data-quest-id="${quest.id}">Cancel</button>` : ''}
           <button class="btn btn-outline btn-sm admin-edit-quest" data-quest-id="${quest.id}">Edit</button>
         </div>
@@ -773,6 +785,7 @@
     const adminDisputeBtn = e.target.closest('.admin-dispute-quest');
     const adminCancelBtn = e.target.closest('.admin-cancel-quest');
     const adminEditBtn = e.target.closest('.admin-edit-quest');
+    const adminConfirmOOBBtn = e.target.closest('.admin-confirm-oob-payment');
 
     if (approveBtn) {
       const questId = parseInt(approveBtn.dataset.questId);
@@ -887,7 +900,6 @@
       }
     }
 
-    // Admin actions on my-quests items
     if (adminApproveBtn) {
       const questId = parseInt(adminApproveBtn.dataset.questId);
       adminApproveBtn.disabled = true;
@@ -955,6 +967,30 @@
       if (!quest) return;
       showAdminEditQuestModal(quest);
     }
+
+    if (adminConfirmOOBBtn) {
+      const questId = parseInt(adminConfirmOOBBtn.dataset.questId);
+      showModal('Confirm OOB Payment', `
+        <p style="font-size: var(--text-sm); color: var(--color-text-muted);">
+          Confirm payment on behalf of both parties and approve this out-of-band quest?
+        </p>
+      `, [
+        { label: 'Cancel', class: 'btn-outline', action: () => {} },
+        {
+          label: 'Confirm & Approve', class: 'btn-gold', action: async () => {
+            try {
+              await api('/admin/quests/confirm-payment', 'POST', { quest_id: questId });
+              showToast('OOB payment confirmed and quest approved.', 'success');
+              coinBurst(e.clientX, e.clientY);
+              await refreshUserBalance();
+              loadMyQuests();
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
+          }
+        }
+      ]);
+    }
   });
 
   function showAdminEditQuestModal(quest) {
@@ -1004,16 +1040,23 @@
   // ---- Wallet Page ----
   async function loadWallet() {
     try {
-      const data = await api('/wallet');
+      // Fetch wallet data and hot wallet info in parallel
+      const [data, hwData] = await Promise.all([
+        api('/wallet'),
+        hotWalletInfo ? Promise.resolve(hotWalletInfo) : apiPublic('/hot-wallet')
+      ]);
+
       walletData = data;
+      if (hwData && !hotWalletInfo) {
+        hotWalletInfo = hwData;
+      }
+
       currentUser.balance = data.balance;
       currentUser.escrowed = data.escrowed;
       currentUser.available = data.available;
-      if (data.eth_address) {
-        currentUser.eth_address = data.eth_address;
-      }
       updateNavBalance();
       renderWallet();
+      loadFundRequests();
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -1036,14 +1079,10 @@
         <span class="wallet-stat-label">Escrowed</span>
         <span class="wallet-stat-value muted">${formatUSDC(walletData.escrowed)} USDC</span>
       </div>
-      <div class="wallet-stat">
-        <span class="wallet-stat-label">Platform Address</span>
-        <span class="wallet-address">${walletData.wallet_address || 'N/A'}</span>
-      </div>
     `;
 
-    // Render ETH QR code
-    renderEthWallet(walletData.eth_address);
+    // Render hot wallet QR and address
+    renderHotWallet(walletData.hot_wallet_address || (hotWalletInfo && hotWalletInfo.address), walletData.hot_wallet_note || (hotWalletInfo && hotWalletInfo.note));
 
     const txList = document.getElementById('tx-list');
     const emptyEl = document.getElementById('wallet-empty');
@@ -1065,6 +1104,8 @@
       const isRefund = tx.type === 'refund';
       const isAdminCredit = tx.type === 'admin_credit';
       const isAdminDebit = tx.type === 'admin_debit';
+      const isDeposit = tx.type === 'deposit';
+      const isWithdrawal = tx.type === 'withdrawal';
 
       let iconClass = 'escrow';
       let iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
@@ -1100,6 +1141,18 @@
         title = 'Admin Debit';
         amountClass = 'negative';
         sign = '-';
+      } else if (isDeposit) {
+        iconClass = 'payment-in';
+        iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 19 19 12"/></svg>';
+        title = 'Deposit';
+        amountClass = 'positive';
+        sign = '+';
+      } else if (isWithdrawal) {
+        iconClass = 'payment-out';
+        iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 5 5 12"/></svg>';
+        title = 'Withdrawal';
+        amountClass = 'negative';
+        sign = '-';
       }
 
       const counterparty = isIncoming ? (tx.from_username || '') : (tx.to_username || '');
@@ -1122,23 +1175,24 @@
     });
   }
 
-  function renderEthWallet(ethAddress) {
+  function renderHotWallet(address, note) {
     const qrContainer = document.getElementById('qr-code-container');
-    const ethAddrText = document.getElementById('eth-address-text');
-    const fundCard = document.getElementById('fund-wallet-card');
+    const addrText = document.getElementById('hot-wallet-address-text');
+    const noteEl = document.getElementById('hot-wallet-note');
 
-    if (!ethAddress) {
-      if (ethAddrText) ethAddrText.textContent = 'Not available';
-      if (qrContainer) qrContainer.innerHTML = '<p class="qr-placeholder">No ETH address on file.</p>';
+    if (!address) {
+      if (addrText) addrText.textContent = 'Not configured';
+      if (qrContainer) qrContainer.innerHTML = '<p class="qr-placeholder">Hot wallet address not set.</p>';
       return;
     }
 
-    if (ethAddrText) ethAddrText.textContent = ethAddress;
+    if (addrText) addrText.textContent = address;
+    if (noteEl) noteEl.textContent = note || '';
 
     if (qrContainer && typeof qrcode !== 'undefined') {
       try {
         const qr = qrcode(0, 'M');
-        qr.addData(ethAddress);
+        qr.addData(address);
         qr.make();
         qrContainer.innerHTML = qr.createSvgTag({ scalable: true });
         const svgEl = qrContainer.querySelector('svg');
@@ -1148,11 +1202,188 @@
           svgEl.style.borderRadius = '8px';
         }
       } catch (err) {
-        qrContainer.innerHTML = `<p class="qr-placeholder">${ethAddress}</p>`;
+        qrContainer.innerHTML = `<p class="qr-placeholder">${escHtml(address)}</p>`;
       }
     } else if (qrContainer) {
-      qrContainer.innerHTML = `<p class="qr-placeholder">${ethAddress}</p>`;
+      qrContainer.innerHTML = `<p class="qr-placeholder">${escHtml(address)}</p>`;
     }
+  }
+
+  // Copy hot wallet address
+  document.getElementById('hot-wallet-copy').addEventListener('click', () => {
+    const addr = document.getElementById('hot-wallet-address-text').textContent;
+    if (addr && addr !== 'Loading...' && addr !== 'Not configured') {
+      navigator.clipboard.writeText(addr).then(() => {
+        const btn = document.getElementById('hot-wallet-copy');
+        btn.style.color = 'var(--color-success)';
+        setTimeout(() => { btn.style.color = ''; }, 1500);
+        showToast('Address copied!', 'success');
+      });
+    }
+  });
+
+  // Deposit button
+  document.getElementById('deposit-btn').addEventListener('click', () => {
+    showModal('Request Deposit', `
+      <p style="margin-bottom: var(--space-4); font-size: var(--text-sm); color: var(--color-text-muted);">
+        Send funds to the hot wallet first, then submit a deposit request. An admin will credit your balance once verified.
+      </p>
+      <div class="form-group">
+        <label for="dep-amount">Amount (USDC)</label>
+        <input type="number" id="dep-amount" class="form-input" placeholder="e.g. 50" min="0.01" step="0.01">
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label for="dep-method">Payment Method</label>
+        <select id="dep-method" class="form-select">
+          <option value="crypto">Crypto (USDC on Base)</option>
+          <option value="cashapp">CashApp</option>
+          <option value="venmo">Venmo</option>
+          <option value="zelle">Zelle</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label for="dep-txhash">Transaction Hash / Reference (optional)</label>
+        <input type="text" id="dep-txhash" class="form-input" placeholder="0x... or CashApp ref">
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label for="dep-note">Note (optional)</label>
+        <input type="text" id="dep-note" class="form-input" placeholder="e.g. CashApp @myhandle">
+      </div>
+    `, [
+      { label: 'Cancel', class: 'btn-outline', action: () => {} },
+      {
+        label: 'Submit Request', class: 'btn-gold', action: async () => {
+          const amount = parseFloat(document.getElementById('dep-amount').value);
+          if (!amount || amount <= 0) { showToast('Enter a valid amount', 'error'); return; }
+          try {
+            await api('/fund-requests', 'POST', {
+              type: 'deposit',
+              amount,
+              method: document.getElementById('dep-method').value,
+              tx_hash: document.getElementById('dep-txhash').value.trim(),
+              note: document.getElementById('dep-note').value.trim()
+            });
+            showToast('Deposit request submitted! Admin will review shortly.', 'success');
+            loadFundRequests();
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        }
+      }
+    ]);
+  });
+
+  // Withdraw button
+  document.getElementById('withdraw-btn').addEventListener('click', () => {
+    const available = walletData ? walletData.available : 0;
+    showModal('Request Withdrawal', `
+      <p style="margin-bottom: var(--space-4); font-size: var(--text-sm); color: var(--color-text-muted);">
+        Submit a withdrawal request. An admin will send funds externally and mark it complete.
+        Available balance: <strong style="color: var(--color-gold);">${formatUSDC(available)} USDC</strong>
+      </p>
+      <div class="form-group">
+        <label for="wd-amount">Amount (USDC)</label>
+        <input type="number" id="wd-amount" class="form-input" placeholder="e.g. 25" min="0.01" step="0.01" max="${available}">
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label for="wd-method">Payment Method</label>
+        <select id="wd-method" class="form-select">
+          <option value="crypto">Crypto (USDC on Base)</option>
+          <option value="cashapp">CashApp</option>
+          <option value="venmo">Venmo</option>
+          <option value="zelle">Zelle</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label for="wd-address">Wallet Address / Payment Info</label>
+        <input type="text" id="wd-address" class="form-input" placeholder="0x... or $CashTag or @VenmoHandle">
+      </div>
+      <div class="form-group" style="margin-top: var(--space-3);">
+        <label for="wd-note">Note (optional)</label>
+        <input type="text" id="wd-note" class="form-input" placeholder="Any additional info...">
+      </div>
+    `, [
+      { label: 'Cancel', class: 'btn-outline', action: () => {} },
+      {
+        label: 'Submit Request', class: 'btn-outline', action: async () => {
+          const amount = parseFloat(document.getElementById('wd-amount').value);
+          const externalAddress = document.getElementById('wd-address').value.trim();
+          if (!amount || amount <= 0) { showToast('Enter a valid amount', 'error'); return; }
+          if (!externalAddress) { showToast('Enter your wallet address or payment info', 'error'); return; }
+          try {
+            await api('/fund-requests', 'POST', {
+              type: 'withdraw',
+              amount,
+              method: document.getElementById('wd-method').value,
+              external_address: externalAddress,
+              note: document.getElementById('wd-note').value.trim()
+            });
+            showToast('Withdrawal request submitted! Admin will process it.', 'success');
+            loadFundRequests();
+          } catch (err) {
+            showToast(err.message, 'error');
+          }
+        }
+      }
+    ]);
+  });
+
+  // Load user's fund requests
+  async function loadFundRequests() {
+    try {
+      const data = await api('/fund-requests');
+      renderFundRequests(data.requests || []);
+    } catch (err) {
+      // Non-fatal
+    }
+  }
+
+  function renderFundRequests(requests) {
+    const container = document.getElementById('fund-requests-list');
+    if (!container) return;
+
+    if (!requests || requests.length === 0) {
+      container.innerHTML = '<p style="color: var(--color-text-muted); font-size: var(--text-sm);">No fund requests yet.</p>';
+      return;
+    }
+
+    container.innerHTML = '';
+    requests.forEach(req => {
+      const item = document.createElement('div');
+      item.className = 'fund-request-item';
+
+      const typeClass = req.type === 'deposit' ? 'badge-deposit' : 'badge-withdraw';
+      const statusClass = `badge-fr-${req.status}`;
+      const methodClass = `badge-method-${req.method || 'crypto'}`;
+      const sign = req.type === 'deposit' ? '+' : '-';
+      const amountClass = req.type === 'deposit' ? 'positive' : 'negative';
+
+      item.innerHTML = `
+        <div class="fund-request-header">
+          <div class="fund-request-meta">
+            <span class="badge ${typeClass}">${capitalizeFirst(req.type)}</span>
+            <span class="badge ${methodClass}">${capitalizeFirst(req.method || 'crypto')}</span>
+            <span class="badge ${statusClass}">${capitalizeFirst(req.status)}</span>
+          </div>
+          <span class="tx-amount ${amountClass}">${sign}${formatUSDC(req.amount)} USDC</span>
+        </div>
+        ${req.note || req.tx_hash || req.external_address ? `
+          <div class="fund-request-details">
+            ${req.tx_hash ? `<span class="fund-req-ref">Ref: <code>${escHtml(req.tx_hash)}</code></span>` : ''}
+            ${req.external_address ? `<span class="fund-req-ref">To: <code>${escHtml(req.external_address)}</code></span>` : ''}
+            ${req.note ? `<span class="fund-req-note">${escHtml(req.note)}</span>` : ''}
+          </div>
+        ` : ''}
+        ${req.admin_note ? `<div class="note-box" style="margin-top: var(--space-2);"><strong>Admin note:</strong> ${escHtml(req.admin_note)}</div>` : ''}
+        <div class="fund-request-footer">
+          <span style="font-size: var(--text-xs); color: var(--color-text-faint);">${timeAgo(req.created_at)}</span>
+          ${req.reviewer_username ? `<span style="font-size: var(--text-xs); color: var(--color-text-faint);">Reviewed by ${escHtml(req.reviewer_username)}</span>` : ''}
+        </div>
+      `;
+      container.appendChild(item);
+    });
   }
 
   // ---- Profile Page ----
@@ -1189,7 +1420,6 @@
           <h3 class="profile-name">${escHtml(profileData.username)} ${adminBadge}</h3>
           <p class="profile-joined">Joined ${new Date(profileData.created_at + 'Z').toLocaleDateString()}</p>
           <p class="wallet-address" style="margin-top: var(--space-1);">${profileData.wallet_address || ''}</p>
-          ${profileData.eth_address ? `<p class="wallet-address" style="margin-top: var(--space-1); color: var(--color-gold-hover);">ETH: ${profileData.eth_address}</p>` : ''}
         </div>
       </div>
       <div class="profile-stats">
@@ -1215,6 +1445,8 @@
 
   document.getElementById('logout-btn').addEventListener('click', () => {
     currentUser = null;
+    walletData = null;
+    hotWalletInfo = null;
     document.getElementById('main-app').classList.add('hidden');
     document.getElementById('auth-screen').classList.remove('hidden');
     document.getElementById('auth-username').value = '';
@@ -1230,6 +1462,7 @@
       btn.classList.add('active');
       adminTab = btn.dataset.adminTab;
       showAdminTab(adminTab);
+      if (adminTab === 'fund-requests') loadAdminFundRequests();
     });
   });
 
@@ -1248,6 +1481,7 @@
     loadAdminUsers();
     loadAdminQuests();
     loadAdminTransactions();
+    if (adminTab === 'fund-requests') loadAdminFundRequests();
   }
 
   async function loadAdminUsers() {
@@ -1270,7 +1504,6 @@
         <td class="admin-td-username">${escHtml(u.username)}</td>
         <td>${formatUSDC(u.balance)}</td>
         <td>${formatUSDC(u.available)}</td>
-        <td class="admin-td-eth"><code class="eth-addr-short">${u.eth_address ? u.eth_address.slice(0, 10) + '...' : 'N/A'}</code></td>
         <td>
           <span class="badge ${u.is_admin ? 'badge-admin' : 'badge-status-posted'}">${u.is_admin ? 'Admin' : 'User'}</span>
         </td>
@@ -1360,6 +1593,8 @@
         ? formatUSDC(quest.current_locked_reward)
         : formatUSDC(quest.max_reward);
 
+      const isOOBSubmitted = quest.payment_method === 'out_of_band' && quest.status === 'submitted';
+
       item.innerHTML = `
         <div class="admin-quest-item-header">
           <div style="flex: 1; min-width: 0;">
@@ -1377,6 +1612,7 @@
         <div class="admin-quest-item-actions">
           ${quest.status === 'submitted' ? `<button class="btn btn-success btn-sm admin-approve-quest" data-quest-id="${quest.id}">Approve</button>` : ''}
           ${quest.status === 'submitted' ? `<button class="btn btn-danger btn-sm admin-dispute-quest" data-quest-id="${quest.id}">Dispute</button>` : ''}
+          ${isOOBSubmitted ? `<button class="btn btn-gold btn-sm admin-confirm-oob-payment" data-quest-id="${quest.id}">Confirm Payment</button>` : ''}
           ${!['approved','cancelled'].includes(quest.status) ? `<button class="btn btn-outline btn-sm admin-cancel-quest" data-quest-id="${quest.id}">Cancel</button>` : ''}
           <button class="btn btn-outline btn-sm admin-edit-quest" data-quest-id="${quest.id}" data-quest='${JSON.stringify({id:quest.id,title:quest.title,description:quest.description,category:quest.category,difficulty:quest.difficulty,min_reward:quest.min_reward,max_reward:quest.max_reward})}'>Edit</button>
         </div>
@@ -1390,6 +1626,7 @@
     const disputeBtn = e.target.closest('.admin-dispute-quest');
     const cancelBtn = e.target.closest('.admin-cancel-quest');
     const editBtn = e.target.closest('.admin-edit-quest');
+    const confirmOOBBtn = e.target.closest('.admin-confirm-oob-payment');
 
     if (approveBtn) {
       const questId = parseInt(approveBtn.dataset.questId);
@@ -1455,6 +1692,30 @@
     if (editBtn) {
       const quest = JSON.parse(editBtn.dataset.quest);
       showAdminEditQuestModalAdmin(quest);
+    }
+
+    if (confirmOOBBtn) {
+      const questId = parseInt(confirmOOBBtn.dataset.questId);
+      showModal('Confirm OOB Payment', `
+        <p style="font-size: var(--text-sm); color: var(--color-text-muted);">
+          Confirm payment on behalf of both parties and approve this out-of-band quest?
+        </p>
+      `, [
+        { label: 'Cancel', class: 'btn-outline', action: () => {} },
+        {
+          label: 'Confirm & Approve', class: 'btn-gold', action: async () => {
+            try {
+              await api('/admin/quests/confirm-payment', 'POST', { quest_id: questId });
+              showToast('OOB payment confirmed and quest approved.', 'success');
+              coinBurst(e.clientX, e.clientY);
+              await refreshUserBalance();
+              loadAdminQuests();
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
+          }
+        }
+      ]);
     }
   });
 
@@ -1534,6 +1795,155 @@
       tbody.appendChild(tr);
     });
   }
+
+  // ---- Admin Fund Requests ----
+  async function loadAdminFundRequests() {
+    const filterEl = document.getElementById('admin-fund-filter');
+    const status = filterEl ? filterEl.value : 'pending';
+    try {
+      const sep = status ? `?status=${status}` : '';
+      // Build the URL for GET with user_id
+      const url = `/admin/fund-requests${sep}`;
+      const data = await api(url);
+      renderAdminFundRequests(data.requests || []);
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  }
+
+  document.getElementById('admin-fund-filter').addEventListener('change', () => {
+    loadAdminFundRequests();
+  });
+
+  function renderAdminFundRequests(requests) {
+    const container = document.getElementById('admin-fund-requests-list');
+    if (!container) return;
+
+    if (!requests || requests.length === 0) {
+      container.innerHTML = '<p style="color: var(--color-text-muted); font-size: var(--text-sm); padding: var(--space-8) 0;">No fund requests found.</p>';
+      return;
+    }
+
+    container.innerHTML = '';
+    requests.forEach(req => {
+      const item = document.createElement('div');
+      item.className = 'admin-fund-request-item';
+
+      const typeClass = req.type === 'deposit' ? 'badge-deposit' : 'badge-withdraw';
+      const statusClass = `badge-fr-${req.status}`;
+      const methodClass = `badge-method-${req.method || 'crypto'}`;
+      const sign = req.type === 'deposit' ? '+' : '-';
+      const amountClass = req.type === 'deposit' ? 'positive' : 'negative';
+      const isPending = req.status === 'pending';
+
+      item.innerHTML = `
+        <div class="admin-fund-req-header">
+          <div style="flex: 1; min-width: 0;">
+            <strong style="font-family: var(--font-display); color: var(--color-text);">${escHtml(req.requester_username)}</strong>
+            <div style="display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-1);">
+              <span class="badge ${typeClass}">${capitalizeFirst(req.type)}</span>
+              <span class="badge ${methodClass}">${capitalizeFirst(req.method || 'crypto')}</span>
+              <span class="badge ${statusClass}">${capitalizeFirst(req.status)}</span>
+            </div>
+          </div>
+          <span class="tx-amount ${amountClass}" style="font-size: var(--text-lg);">${sign}${formatUSDC(req.amount)} USDC</span>
+        </div>
+        ${req.tx_hash || req.external_address || req.note ? `
+          <div class="fund-request-details">
+            ${req.tx_hash ? `<span class="fund-req-ref">Tx/Ref: <code>${escHtml(req.tx_hash)}</code></span>` : ''}
+            ${req.external_address ? `<span class="fund-req-ref">Send to: <code>${escHtml(req.external_address)}</code></span>` : ''}
+            ${req.note ? `<span class="fund-req-note">${escHtml(req.note)}</span>` : ''}
+          </div>
+        ` : ''}
+        ${req.admin_note ? `<div class="note-box" style="margin-top: var(--space-2);"><strong>Admin note:</strong> ${escHtml(req.admin_note)}</div>` : ''}
+        <div class="admin-fund-req-footer">
+          <span style="font-size: var(--text-xs); color: var(--color-text-faint);">${timeAgo(req.created_at)}</span>
+          ${req.reviewer_username ? `<span style="font-size: var(--text-xs); color: var(--color-text-faint);">Reviewed by ${escHtml(req.reviewer_username)}</span>` : ''}
+          ${isPending ? `
+            <div class="admin-fund-req-actions">
+              <button class="btn btn-success btn-sm admin-approve-fund-req" data-req-id="${req.id}" data-type="${req.type}" data-ext="${escHtml(req.external_address || '')}">Approve</button>
+              <button class="btn btn-danger btn-sm admin-deny-fund-req" data-req-id="${req.id}">Deny</button>
+            </div>
+          ` : ''}
+        </div>
+      `;
+      container.appendChild(item);
+    });
+  }
+
+  document.getElementById('admin-fund-requests-list').addEventListener('click', async (e) => {
+    const approveBtn = e.target.closest('.admin-approve-fund-req');
+    const denyBtn = e.target.closest('.admin-deny-fund-req');
+
+    if (approveBtn) {
+      const reqId = parseInt(approveBtn.dataset.reqId);
+      const reqType = approveBtn.dataset.type;
+      const extAddr = approveBtn.dataset.ext;
+
+      let confirmMsg = `Approve this ${reqType} request?`;
+      if (reqType === 'withdraw' && extAddr) {
+        confirmMsg = `Approve withdrawal? Make sure you have sent funds to: <code style="word-break:break-all;">${escHtml(extAddr)}</code>`;
+      }
+
+      showModal(`Approve ${capitalizeFirst(reqType)} Request`, `
+        <p style="font-size: var(--text-sm); color: var(--color-text-muted);">${confirmMsg}</p>
+        <div class="form-group" style="margin-top: var(--space-3);">
+          <label for="approve-admin-note">Admin Note (optional)</label>
+          <input type="text" id="approve-admin-note" class="form-input" placeholder="Optional note...">
+        </div>
+      `, [
+        { label: 'Cancel', class: 'btn-outline', action: () => {} },
+        {
+          label: 'Approve', class: 'btn-success', action: async () => {
+            const adminNote = document.getElementById('approve-admin-note').value.trim();
+            try {
+              await api('/admin/fund-requests/review', 'POST', {
+                request_id: reqId,
+                action: 'approve',
+                admin_note: adminNote
+              });
+              showToast(`Request approved.`, 'success');
+              coinBurst(e.clientX, e.clientY);
+              await refreshUserBalance();
+              loadAdminFundRequests();
+              loadAdminUsers();
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
+          }
+        }
+      ]);
+    }
+
+    if (denyBtn) {
+      const reqId = parseInt(denyBtn.dataset.reqId);
+      showModal('Deny Request', `
+        <p style="font-size: var(--text-sm); color: var(--color-text-muted);">Optionally add a note explaining why this request is denied.</p>
+        <div class="form-group" style="margin-top: var(--space-3);">
+          <label for="deny-admin-note">Reason (optional)</label>
+          <input type="text" id="deny-admin-note" class="form-input" placeholder="Reason for denial...">
+        </div>
+      `, [
+        { label: 'Cancel', class: 'btn-outline', action: () => {} },
+        {
+          label: 'Deny', class: 'btn-danger', action: async () => {
+            const adminNote = document.getElementById('deny-admin-note').value.trim();
+            try {
+              await api('/admin/fund-requests/review', 'POST', {
+                request_id: reqId,
+                action: 'deny',
+                admin_note: adminNote
+              });
+              showToast('Request denied.', 'info');
+              loadAdminFundRequests();
+            } catch (err) {
+              showToast(err.message, 'error');
+            }
+          }
+        }
+      ]);
+    }
+  });
 
   // ---- Utility ----
   function escHtml(str) {

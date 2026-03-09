@@ -2066,3 +2066,243 @@ textarea.form-input {
 .flex-col { flex-direction: column; }
 .items-center { align-items: center; }
 .justify-between { justify-content: space-between; }
+
+/* ============================================
+   V3 HOT WALLET — NEW STYLES
+   ============================================ */
+
+/* Wallet action row (deposit / withdraw buttons) */
+.wallet-actions-row {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-6);
+}
+
+@media (max-width: 480px) {
+  .wallet-actions-row {
+    flex-direction: column;
+  }
+  .wallet-actions-row .btn {
+    width: 100%;
+  }
+}
+
+/* ---- Fund Request Items (user view) ---- */
+.fund-requests-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
+.fund-request-item {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  transition: border-color var(--transition-interactive);
+}
+
+.fund-request-item:hover {
+  border-color: var(--color-gold);
+}
+
+.fund-request-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.fund-request-meta {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.fund-request-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.fund-req-ref {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.fund-req-ref code {
+  font-family: monospace;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.fund-req-note {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-style: italic;
+}
+
+.fund-request-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* ---- Fund Request Type Badges ---- */
+.badge-deposit {
+  background: var(--color-success-highlight);
+  color: var(--color-success);
+}
+
+.badge-withdraw {
+  background: var(--color-blue-highlight);
+  color: var(--color-blue);
+}
+
+/* ---- Fund Request Status Badges ---- */
+.badge-fr-pending {
+  background: var(--color-gold-highlight);
+  color: var(--color-gold);
+}
+
+.badge-fr-approved {
+  background: var(--color-success-highlight);
+  color: var(--color-success);
+}
+
+.badge-fr-denied {
+  background: var(--color-burgundy-highlight);
+  color: var(--color-burgundy);
+}
+
+/* ---- Payment Method Badges ---- */
+.badge-method-crypto {
+  background: var(--color-blue-highlight);
+  color: var(--color-blue);
+}
+
+.badge-method-cashapp {
+  background: #d4f5de;
+  color: #007820;
+}
+
+[data-theme="dark"] .badge-method-cashapp {
+  background: #0a2e14;
+  color: #3dba63;
+}
+
+.badge-method-venmo {
+  background: #d0e8ff;
+  color: #005fa3;
+}
+
+[data-theme="dark"] .badge-method-venmo {
+  background: #0a1e3a;
+  color: #5aaeff;
+}
+
+.badge-method-zelle {
+  background: var(--color-purple-highlight);
+  color: var(--color-purple);
+}
+
+.badge-method-other {
+  background: var(--color-surface-dynamic);
+  color: var(--color-text-muted);
+}
+
+/* ---- Admin Fund Requests Tab ---- */
+.admin-fund-requests-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.admin-fund-request-item {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  transition: border-color var(--transition-interactive);
+}
+
+.admin-fund-request-item:hover {
+  border-color: var(--color-gold);
+}
+
+/* Pending requests get a subtle highlight */
+.admin-fund-request-item:has(.badge-fr-pending) {
+  border-color: var(--color-gold);
+  background: var(--color-gold-glow);
+}
+
+.admin-fund-req-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+}
+
+.admin-fund-req-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
+}
+
+.admin-fund-req-actions {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+
+@media (max-width: 480px) {
+  .admin-fund-req-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .admin-fund-req-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .admin-fund-req-actions .btn {
+    flex: 1;
+  }
+}
+
+/* ---- Transaction type badges v3 additions ---- */
+.badge-tx-deposit { background: var(--color-success-highlight); color: var(--color-success); }
+.badge-tx-withdrawal { background: var(--color-blue-highlight); color: var(--color-blue); }
+
+/* ---- Filter select in fund requests tab ---- */
+.admin-fund-requests-filters {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+@media (max-width: 480px) {
+  .admin-fund-requests-filters .form-select {
+    max-width: 100% !important;
+    width: 100%;
+  }
+}
