@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bounty Board — Family Quest Board</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="./base.css">
+  <link rel="stylesheet" href="./style.css">
+  <!-- QR Code library for ETH wallet -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+</head>
+<body>
+  <div id="app">
+    <!-- AUTH SCREEN -->
+    <div id="auth-screen" class="auth-container">
+      <div class="auth-card">
+        <div style="margin-bottom: var(--space-4); color: var(--color-gold);">
+          <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin: 0 auto;">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </div>
+        <h2 id="auth-title">Enter the Guild</h2>
+        <p class="auth-subtitle" id="auth-subtitle">Sign in to access the quest board</p>
+        <div id="auth-error" class="msg-error hidden"></div>
+        <form id="auth-form" class="auth-form" autocomplete="off">
+          <div class="form-group">
+            <label for="auth-username">Adventurer Name</label>
+            <input type="text" id="auth-username" class="form-input" placeholder="Enter your name..." required minlength="2">
+          </div>
+          <div class="form-group">
+            <label for="auth-password">Password</label>
+            <input type="password" id="auth-password" class="form-input" placeholder="Enter your password..." required minlength="4">
+          </div>
+          <button type="submit" class="btn btn-gold btn-full" id="auth-submit">
+            <span id="auth-btn-text">Sign In</span>
+          </button>
+        </form>
+        <div class="auth-toggle">
+          <span id="auth-toggle-text">New adventurer?</span>
+          <button id="auth-toggle-btn" type="button">Register</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MAIN APP (hidden until auth) -->
+    <div id="main-app" class="hidden">
+      <!-- NAVBAR -->
+      <nav class="navbar" id="navbar">
+        <a href="#board" class="navbar-brand">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="brand-icon">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+          <h1>Bounty Board</h1>
+        </a>
+
+        <button class="mobile-menu-btn" id="mobile-menu-btn" aria-label="Open menu">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+          </svg>
+        </button>
+
+        <div class="navbar-links" id="navbar-links">
+          <a href="#board" class="nav-link active" data-nav="board">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Quest Board
+          </a>
+          <a href="#create" class="nav-link" data-nav="create">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Post Quest
+          </a>
+          <a href="#my-quests" class="nav-link" data-nav="my-quests">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            My Quests
+          </a>
+          <a href="#wallet" class="nav-link" data-nav="wallet">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+            Wallet
+          </a>
+          <a href="#profile" class="nav-link" data-nav="profile">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            Profile
+          </a>
+          <!-- Admin link — shown by JS when user is admin -->
+          <a href="#admin" class="nav-link hidden" data-nav="admin" id="nav-admin-link">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+            Admin
+          </a>
+        </div>
+
+        <div class="navbar-right">
+          <div class="nav-balance" id="nav-balance">
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="currentColor" stroke="none" class="coin-icon">
+              <circle cx="12" cy="12" r="10" fill="currentColor" opacity="0.3"/>
+              <circle cx="12" cy="12" r="8" fill="currentColor"/>
+              <text x="12" y="16" text-anchor="middle" font-size="10" fill="var(--color-text-inverse)" font-weight="bold">$</text>
+            </svg>
+            <span id="nav-balance-amount">1000.00</span>
+          </div>
+          <span class="nav-username" id="nav-username">adventurer</span>
+          <button class="theme-toggle" data-theme-toggle aria-label="Switch to dark mode">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+            </svg>
+          </button>
+        </div>
+      </nav>
+
+      <!-- PAGES -->
+      <main class="main-content">
+        <!-- BOARD PAGE -->
+        <div id="page-board" class="page">
+          <div class="page-header">
+            <h2 class="page-title">Quest Board</h2>
+            <p class="page-subtitle">Browse available quests and claim your bounty</p>
+          </div>
+          <div class="filters-bar">
+            <div class="filter-group">
+              <label>Category</label>
+              <select class="form-select" id="filter-category">
+                <option value="">All Categories</option>
+                <option value="Chores">Chores</option>
+                <option value="Errands">Errands</option>
+                <option value="Projects">Projects</option>
+                <option value="Favors">Favors</option>
+                <option value="Learning">Learning</option>
+                <option value="Creative">Creative</option>
+              </select>
+            </div>
+            <div class="filter-group">
+              <label>Difficulty</label>
+              <select class="form-select" id="filter-difficulty">
+                <option value="">All Levels</option>
+                <option value="Easy">Easy</option>
+                <option value="Medium">Medium</option>
+                <option value="Hard">Hard</option>
+                <option value="Epic">Epic</option>
+              </select>
+            </div>
+            <div class="filter-group sort-group">
+              <label>Sort By</label>
+              <select class="form-select" id="filter-sort">
+                <option value="newest">Newest</option>
+                <option value="highest">Highest Reward</option>
+                <option value="ending">Ending Soon</option>
+              </select>
+            </div>
+          </div>
+          <div id="quest-grid" class="quest-grid stagger-in">
+            <!-- Quest cards rendered by JS -->
+          </div>
+          <div id="board-empty" class="empty-state hidden">
+            <div class="empty-state-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+            </div>
+            <h3>No Quests Available</h3>
+            <p>The board is empty. Be the first to post a quest!</p>
+            <a href="#create" class="btn btn-gold mt-6">Post a Quest</a>
+          </div>
+          <div id="board-loading" class="quest-grid">
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+            <div class="skeleton skeleton-card"></div>
+          </div>
+        </div>
+
+        <!-- CREATE PAGE -->
+        <div id="page-create" class="page hidden">
+          <div class="page-header">
+            <h2 class="page-title">Post a New Quest</h2>
+            <p class="page-subtitle">Create a bounty for fellow adventurers</p>
+          </div>
+          <form id="create-form" class="create-form flex flex-col gap-4">
+            <div id="create-error" class="msg-error hidden"></div>
+            <div class="form-group">
+              <label for="quest-title">Quest Title</label>
+              <input type="text" id="quest-title" class="form-input" placeholder="e.g., Vanquish the Dish Dragon" required>
+            </div>
+            <div class="form-group">
+              <label for="quest-description">Description</label>
+              <textarea id="quest-description" class="form-input" placeholder="Describe the quest objectives..." required></textarea>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="quest-category">Category</label>
+                <select id="quest-category" class="form-select" required>
+                  <option value="">Select category...</option>
+                  <option value="Chores">Chores</option>
+                  <option value="Errands">Errands</option>
+                  <option value="Projects">Projects</option>
+                  <option value="Favors">Favors</option>
+                  <option value="Learning">Learning</option>
+                  <option value="Creative">Creative</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="quest-difficulty">Difficulty</label>
+                <select id="quest-difficulty" class="form-select" required>
+                  <option value="">Select difficulty...</option>
+                  <option value="Easy">Easy</option>
+                  <option value="Medium">Medium</option>
+                  <option value="Hard">Hard</option>
+                  <option value="Epic">Epic</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="quest-min-reward">Min Reward (USDC)</label>
+                <input type="number" id="quest-min-reward" class="form-input" placeholder="5" min="0.01" step="0.01" required>
+              </div>
+              <div class="form-group">
+                <label for="quest-max-reward">Max Reward (USDC)</label>
+                <input type="number" id="quest-max-reward" class="form-input" placeholder="50" min="0.01" step="0.01" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="quest-escalation">Escalation Type</label>
+                <select id="quest-escalation" class="form-select" required>
+                  <option value="linear">Linear</option>
+                  <option value="exponential">Exponential</option>
+                  <option value="stepped">Stepped</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="quest-period">Escalation Period</label>
+                <select id="quest-period" class="form-select" required>
+                  <option value="24">24 hours</option>
+                  <option value="48">48 hours</option>
+                  <option value="168">1 week</option>
+                  <option value="336">2 weeks</option>
+                </select>
+              </div>
+            </div>
+            <!-- Payment Method -->
+            <div class="form-group">
+              <label for="quest-payment-method">Payment Method</label>
+              <select id="quest-payment-method" class="form-select">
+                <option value="platform">Platform Balance (USDC Escrow)</option>
+                <option value="out_of_band">Out of Band (Cash, Venmo, etc.)</option>
+              </select>
+              <p class="form-hint" id="payment-method-hint">Reward will be escrowed from your balance. Both parties confirm on-chain.</p>
+            </div>
+            <div class="escalation-preview" id="escalation-preview">
+              <h4>Reward Escalation Preview</h4>
+              <div class="escalation-chart" id="escalation-chart">
+                <div class="escalation-line" id="escalation-line">
+                  <svg viewBox="0 0 300 120" preserveAspectRatio="none">
+                    <path class="area" id="esc-area" d=""/>
+                    <path id="esc-path" d=""/>
+                  </svg>
+                </div>
+              </div>
+              <div class="escalation-labels">
+                <span id="esc-label-min">0 USDC</span>
+                <span id="esc-label-time">24h</span>
+                <span id="esc-label-max">0 USDC</span>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-gold btn-full mt-4">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+              Post Quest
+            </button>
+          </form>
+        </div>
+
+        <!-- MY QUESTS PAGE -->
+        <div id="page-my-quests" class="page hidden">
+          <div class="page-header">
+            <h2 class="page-title">My Quests</h2>
+            <p class="page-subtitle">Track your posted and claimed quests</p>
+          </div>
+          <div class="tabs">
+            <button class="tab-btn active" data-tab="posted">Posted</button>
+            <button class="tab-btn" data-tab="claimed">Claimed</button>
+            <button class="tab-btn" data-tab="completed">Completed</button>
+          </div>
+          <div id="my-quests-content" class="quest-list">
+            <!-- Rendered by JS -->
+          </div>
+          <div id="my-quests-empty" class="empty-state hidden">
+            <div class="empty-state-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+            </div>
+            <h3 id="my-quests-empty-title">No Quests Here</h3>
+            <p id="my-quests-empty-text">Start your adventure by posting or claiming a quest!</p>
+          </div>
+        </div>
+
+        <!-- WALLET PAGE -->
+        <div id="page-wallet" class="page hidden">
+          <div class="page-header">
+            <h2 class="page-title">Adventurer's Vault</h2>
+            <p class="page-subtitle">Manage your USDC treasury and ETH wallet</p>
+          </div>
+          <div class="wallet-grid" id="wallet-stats">
+            <!-- Rendered by JS -->
+          </div>
+          <!-- Fund Wallet Card -->
+          <div class="fund-wallet-card" id="fund-wallet-card">
+            <div class="fund-wallet-header">
+              <div>
+                <h3 class="fund-wallet-title">Fund Your Wallet</h3>
+                <p class="fund-wallet-subtitle">Send ETH or tokens to this address on Base L2</p>
+              </div>
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--color-gold); flex-shrink: 0;"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+            </div>
+            <div class="fund-wallet-body">
+              <div class="qr-code-container" id="qr-code-container">
+                <!-- QR code rendered by JS -->
+              </div>
+              <div class="eth-address-block">
+                <label class="eth-address-label">Your ETH Address</label>
+                <div class="eth-address-display" id="eth-address-display">
+                  <code class="eth-address-text" id="eth-address-text">Loading...</code>
+                  <button class="btn-copy" id="eth-address-copy" title="Copy address" onclick="copyEthAddress()">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                </div>
+                <p class="eth-address-note">This address is unique to your account. Share it to receive payments.</p>
+              </div>
+            </div>
+          </div>
+          <h3 class="section-heading">Transaction Ledger</h3>
+          <div id="tx-list" class="tx-list">
+            <!-- Rendered by JS -->
+          </div>
+          <div id="wallet-empty" class="empty-state hidden">
+            <div class="empty-state-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+            </div>
+            <h3>No Transactions Yet</h3>
+            <p>Your ledger will fill up as you post and complete quests.</p>
+          </div>
+        </div>
+
+        <!-- PROFILE PAGE -->
+        <div id="page-profile" class="page hidden">
+          <div class="page-header">
+            <h2 class="page-title">Adventurer Profile</h2>
+            <p class="page-subtitle">Your guild card and accomplishments</p>
+          </div>
+          <div class="profile-card" id="profile-card">
+            <!-- Rendered by JS -->
+          </div>
+          <button class="btn btn-outline mt-6" id="logout-btn">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Leave Guild (Logout)
+          </button>
+        </div>
+
+        <!-- ADMIN PAGE -->
+        <div id="page-admin" class="page hidden">
+          <div class="page-header">
+            <h2 class="page-title">Admin Panel</h2>
+            <p class="page-subtitle">Manage users, quests, and transactions</p>
+          </div>
+          <div class="tabs" id="admin-tabs">
+            <button class="tab-btn active" data-admin-tab="users">Users</button>
+            <button class="tab-btn" data-admin-tab="quests">All Quests</button>
+            <button class="tab-btn" data-admin-tab="transactions">Transactions</button>
+          </div>
+
+          <!-- Admin Users Tab -->
+          <div id="admin-tab-users" class="admin-tab-content">
+            <div class="admin-table-wrap">
+              <table class="admin-table" id="admin-users-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Username</th>
+                    <th>Balance</th>
+                    <th>Available</th>
+                    <th>ETH Address</th>
+                    <th>Admin</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-users-tbody">
+                  <!-- Rendered by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Admin All Quests Tab -->
+          <div id="admin-tab-quests" class="admin-tab-content hidden">
+            <div class="admin-quests-list" id="admin-quests-list">
+              <!-- Rendered by JS -->
+            </div>
+          </div>
+
+          <!-- Admin Transactions Tab -->
+          <div id="admin-tab-transactions" class="admin-tab-content hidden">
+            <div class="admin-table-wrap">
+              <table class="admin-table" id="admin-tx-table">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Type</th>
+                    <th>From</th>
+                    <th>To</th>
+                    <th>Quest</th>
+                    <th>Amount</th>
+                    <th>Note</th>
+                    <th>When</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-tx-tbody">
+                  <!-- Rendered by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- MODAL -->
+    <div id="modal-overlay" class="modal-overlay hidden">
+      <div class="modal-content">
+        <h3 class="modal-title" id="modal-title"></h3>
+        <div id="modal-body"></div>
+        <div class="modal-actions" id="modal-actions"></div>
+      </div>
+    </div>
+
+    <!-- TOAST CONTAINER -->
+    <div class="toast-container" id="toast-container"></div>
+  </div>
+
+  <script src="./app.js"></script>
+  <script>
+    function copyEthAddress() {
+      const addr = document.getElementById('eth-address-text').textContent;
+      if (addr && addr !== 'Loading...' && addr !== 'Not available') {
+        navigator.clipboard.writeText(addr).then(() => {
+          const btn = document.getElementById('eth-address-copy');
+          btn.style.color = 'var(--color-success)';
+          setTimeout(() => { btn.style.color = ''; }, 1500);
+        });
+      }
+    }
+  </script>
+</body>
+</html>
