@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-import json, os, sys, sqlite3, hashlib, time, random, string, secrets
+import json, os, sys, sqlite3, hashlib, time, random, string, secrets, base64
+import urllib.request, urllib.parse
 from datetime import datetime, timezone
 
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data.db')
@@ -35,6 +36,23 @@ if _key_env:
 elif _key_file and os.path.isfile(_key_file):
     with open(_key_file, 'r') as f:
         HOT_WALLET_PRIVATE_KEY = f.read().strip()
+
+# ============================================================================
+# OAUTH SSO CONFIGURATION
+# ============================================================================
+GOOGLE_CLIENT_ID = os.environ.get('BOUNTY_GOOGLE_CLIENT_ID', '').strip()
+GOOGLE_CLIENT_SECRET = os.environ.get('BOUNTY_GOOGLE_CLIENT_SECRET', '').strip()
+MICROSOFT_CLIENT_ID = os.environ.get('BOUNTY_MICROSOFT_CLIENT_ID', '').strip()
+MICROSOFT_CLIENT_SECRET = os.environ.get('BOUNTY_MICROSOFT_CLIENT_SECRET', '').strip()
+
+GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token'
+MICROSOFT_TOKEN_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+
+def decode_jwt_payload(token):
+    """Decode JWT payload without signature verification (token is fresh from provider)."""
+    payload = token.split('.')[1]
+    payload += '=' * (4 - len(payload) % 4)
+    return json.loads(base64.urlsafe_b64decode(payload))
 
 # Minimal ERC-20 ABI for transfer + balanceOf
 ERC20_ABI = json.loads('[{"constant":false,"inputs":[{"name":"to","type":"address"},{"name":"value","type":"uint256"}],"name":"transfer","outputs":[{"name":"","type":"bool"}],"type":"function"},{"constant":true,"inputs":[{"name":"owner","type":"address"}],"name":"balanceOf","outputs":[{"name":"","type":"uint256"}],"type":"function"}]')
@@ -226,6 +244,11 @@ def init_db(db):
     if 'eth_address' not in existing_user_cols:
         db.execute("ALTER TABLE users ADD COLUMN eth_address TEXT")
         db.commit()
+    # OAuth SSO columns
+    for col in ['email', 'oauth_provider', 'oauth_id']:
+        if col not in existing_user_cols:
+            db.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT")
+            db.commit()
 
     existing_quest_cols = [row[1] for row in db.execute("PRAGMA table_info(quests)").fetchall()]
     if 'payment_method' not in existing_quest_cols:
@@ -412,6 +435,144 @@ def handle_login(db, body):
         "available": round(user['balance'] - escrowed, 2),
         "is_admin": bool(user['is_admin']),
         "created_at": user['created_at']
+    })
+
+# ============================================================================
+# OAUTH SSO HANDLERS
+# ============================================================================
+def handle_oauth_config(db, params):
+    """Return configured OAuth client IDs (not secrets) so frontend can build auth URLs."""
+    config = {}
+    if GOOGLE_CLIENT_ID:
+        config['google_client_id'] = GOOGLE_CLIENT_ID
+    if MICROSOFT_CLIENT_ID:
+        config['microsoft_client_id'] = MICROSOFT_CLIENT_ID
+    respond(config)
+
+def handle_oauth_callback(db, body):
+    """Exchange OAuth authorization code for user session."""
+    provider = body.get('provider', '')
+    code = body.get('code', '')
+    redirect_uri = body.get('redirect_uri', '')
+
+    if provider not in ('google', 'microsoft') or not code:
+        error("Invalid OAuth request")
+
+    # Select provider config
+    if provider == 'google':
+        token_url = GOOGLE_TOKEN_URL
+        client_id = GOOGLE_CLIENT_ID
+        client_secret = GOOGLE_CLIENT_SECRET
+    else:
+        token_url = MICROSOFT_TOKEN_URL
+        client_id = MICROSOFT_CLIENT_ID
+        client_secret = MICROSOFT_CLIENT_SECRET
+
+    if not client_id or not client_secret:
+        error(f"{provider.title()} SSO is not configured on this server")
+
+    # Exchange authorization code for tokens
+    token_data = urllib.parse.urlencode({
+        'grant_type': 'authorization_code',
+        'code': code,
+        'redirect_uri': redirect_uri,
+        'client_id': client_id,
+        'client_secret': client_secret,
+    }).encode()
+
+    req = urllib.request.Request(
+        token_url,
+        data=token_data,
+        headers={'Content-Type': 'application/x-www-form-urlencoded'}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            tokens = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        err_body = e.read().decode() if hasattr(e, 'read') else str(e)
+        error(f"OAuth token exchange failed: {err_body}")
+    except Exception as e:
+        error(f"OAuth token exchange error: {str(e)}")
+
+    id_token = tokens.get('id_token', '')
+    if not id_token:
+        error("No id_token received from OAuth provider")
+
+    # Decode JWT claims
+    try:
+        claims = decode_jwt_payload(id_token)
+    except Exception as e:
+        error(f"Failed to decode OAuth token: {str(e)}")
+
+    # Extract user info from claims
+    if provider == 'google':
+        oauth_id = claims.get('sub', '')
+        email = claims.get('email', '')
+        name = claims.get('name', '') or (email.split('@')[0] if email else '')
+    else:  # microsoft
+        oauth_id = claims.get('oid', '') or claims.get('sub', '')
+        email = claims.get('email', '') or claims.get('preferred_username', '')
+        name = claims.get('name', '') or (email.split('@')[0] if email else '')
+
+    if not oauth_id or not email:
+        error("Could not get user info from OAuth provider")
+
+    # 1. Check for existing OAuth link
+    user = db.execute(
+        "SELECT * FROM users WHERE oauth_provider = ? AND oauth_id = ?",
+        [provider, oauth_id]
+    ).fetchone()
+
+    if not user:
+        # 2. Check for email match → link OAuth to existing account
+        user = db.execute(
+            "SELECT * FROM users WHERE email = ?",
+            [email]
+        ).fetchone()
+
+        if user:
+            db.execute(
+                "UPDATE users SET oauth_provider = ?, oauth_id = ? WHERE id = ?",
+                [provider, oauth_id, user['id']]
+            )
+            db.commit()
+            user = db.execute("SELECT * FROM users WHERE id = ?", [user['id']]).fetchone()
+        else:
+            # 3. Create new user
+            base_username = (name or 'user').replace(' ', '_')[:20].lower()
+            # Remove non-alphanumeric chars except underscore
+            base_username = ''.join(c for c in base_username if c.isalnum() or c == '_') or 'user'
+            username = base_username
+            counter = 1
+            while db.execute("SELECT id FROM users WHERE username = ?", [username]).fetchone():
+                username = f"{base_username}_{counter}"
+                counter += 1
+
+            wallet = gen_wallet()
+            db.execute(
+                "INSERT INTO users (username, password_hash, wallet_address, balance, email, oauth_provider, oauth_id) VALUES (?, ?, ?, 0.0, ?, ?, ?)",
+                [username, '', wallet, email, provider, oauth_id]
+            )
+            db.commit()
+            user = db.execute("SELECT * FROM users WHERE username = ?", [username]).fetchone()
+
+    # Update email if not set on existing user
+    if user['email'] != email and email:
+        db.execute("UPDATE users SET email = ? WHERE id = ?", [email, user['id']])
+        db.commit()
+        user = db.execute("SELECT * FROM users WHERE id = ?", [user['id']]).fetchone()
+
+    escrowed = get_escrowed(db, user['id'])
+    respond({
+        "user_id": user['id'],
+        "username": user['username'],
+        "wallet_address": user['wallet_address'],
+        "balance": user['balance'],
+        "escrowed": escrowed,
+        "available": round(user['balance'] - escrowed, 2),
+        "is_admin": bool(user['is_admin']),
+        "created_at": user['created_at'],
+        "email": user['email'] or ''
     })
 
 def handle_get_quests(db, params):
@@ -1119,6 +1280,7 @@ def handle_admin_users(db, params):
 
     users = db.execute("""
         SELECT u.id, u.username, u.balance, u.is_admin, u.created_at,
+               u.email, u.oauth_provider,
                COALESCE((SELECT SUM(max_reward) FROM quests
                          WHERE poster_id = u.id AND status IN ('posted','claimed','submitted')
                          AND payment_method = 'platform'), 0) as escrowed
@@ -1554,6 +1716,11 @@ def main():
             handle_admin_fund_requests(db, params)
         elif path == '/admin/fund-requests/review' and method == 'POST':
             handle_admin_review_fund_request(db, body)
+        # OAuth SSO endpoints
+        elif path == '/oauth/config' and method == 'GET':
+            handle_oauth_config(db, params)
+        elif path == '/oauth/callback' and method == 'POST':
+            handle_oauth_callback(db, body)
         else:
             error(f"Unknown endpoint: {method} {path}", 404)
     finally:

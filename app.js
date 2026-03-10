@@ -238,6 +238,105 @@
     }
   });
 
+  // ---- OAuth SSO ----
+  let oauthConfig = null;
+
+  async function loadOAuthConfig() {
+    try {
+      oauthConfig = await api('/oauth/config');
+      const ssoContainer = document.getElementById('sso-buttons');
+      if (oauthConfig.google_client_id) {
+        document.getElementById('btn-google-sso').classList.remove('hidden');
+      }
+      if (oauthConfig.microsoft_client_id) {
+        document.getElementById('btn-microsoft-sso').classList.remove('hidden');
+      }
+      if (oauthConfig.google_client_id || oauthConfig.microsoft_client_id) {
+        ssoContainer.classList.remove('hidden');
+      }
+    } catch (e) {
+      // SSO not configured — buttons stay hidden
+    }
+  }
+
+  function getOAuthRedirectUri() {
+    // Must match what's registered in Google/Microsoft console
+    return window.location.origin + window.location.pathname;
+  }
+
+  function startGoogleOAuth() {
+    const params = new URLSearchParams({
+      client_id: oauthConfig.google_client_id,
+      redirect_uri: getOAuthRedirectUri(),
+      response_type: 'code',
+      scope: 'openid email profile',
+      access_type: 'offline',
+      prompt: 'select_account'
+    });
+    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params}`;
+  }
+
+  function startMicrosoftOAuth() {
+    const params = new URLSearchParams({
+      client_id: oauthConfig.microsoft_client_id,
+      redirect_uri: getOAuthRedirectUri(),
+      response_type: 'code',
+      scope: 'openid email profile',
+      response_mode: 'query'
+    });
+    window.location.href = `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params}`;
+  }
+
+  document.getElementById('btn-google-sso').addEventListener('click', startGoogleOAuth);
+  document.getElementById('btn-microsoft-sso').addEventListener('click', startMicrosoftOAuth);
+
+  // Handle OAuth callback — check for ?code= in URL on page load
+  async function handleOAuthCallback() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    if (!code) return false;
+
+    // Microsoft includes session_state, Google does not
+    const provider = urlParams.get('session_state') ? 'microsoft' : 'google';
+
+    try {
+      const data = await api('/oauth/callback', 'POST', {
+        provider,
+        code,
+        redirect_uri: getOAuthRedirectUri()
+      });
+
+      currentUser = {
+        user_id: data.user_id,
+        username: data.username,
+        wallet_address: data.wallet_address,
+        balance: data.balance,
+        escrowed: data.escrowed || 0,
+        available: data.available !== undefined ? data.available : data.balance,
+        is_admin: data.is_admin || false
+      };
+
+      // Clean URL — remove OAuth params
+      window.history.replaceState({}, document.title, window.location.pathname + '#board');
+      enterApp();
+      return true;
+    } catch (err) {
+      const errEl = document.getElementById('auth-error');
+      errEl.textContent = 'SSO login failed: ' + err.message;
+      errEl.classList.remove('hidden');
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return false;
+    }
+  }
+
+  // Initialize OAuth on page load
+  (async function initOAuth() {
+    const handled = await handleOAuthCallback();
+    if (!handled) {
+      loadOAuthConfig();
+    }
+  })();
+
   function enterApp() {
     document.getElementById('auth-screen').classList.add('hidden');
     document.getElementById('main-app').classList.remove('hidden');
@@ -1574,7 +1673,11 @@
       const tr = document.createElement('tr');
       tr.innerHTML = `
         <td>${u.id}</td>
-        <td class="admin-td-username">${escHtml(u.username)}${isSelf ? ' <span class="badge badge-status-posted" style="font-size:var(--text-xs);">You</span>' : ''}</td>
+        <td class="admin-td-username">
+          ${escHtml(u.username)}${isSelf ? ' <span class="badge badge-status-posted" style="font-size:var(--text-xs);">You</span>' : ''}
+          ${u.oauth_provider ? ` <span class="badge" style="font-size:var(--text-xs); background:var(--color-surface-elevated); color:var(--color-text-muted);">${u.oauth_provider === 'google' ? 'Google' : 'Microsoft'}</span>` : ''}
+          ${u.email ? `<div style="font-size:var(--text-xs); color:var(--color-text-muted); margin-top:2px;">${escHtml(u.email)}</div>` : ''}
+        </td>
         <td>${formatUSDC(u.balance)}</td>
         <td>${formatUSDC(u.available)}</td>
         <td>
